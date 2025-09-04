@@ -55,9 +55,11 @@ Thumbs.db
 *.tmp
 *.temp
 
-# Payment logs
-payment_server.log
-bot.log
+# Logs
+*.log
 
 # State files
 auction_state.json
+
+# Database
+auction_bot.db
