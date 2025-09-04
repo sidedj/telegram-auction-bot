@@ -1,0 +1,38 @@
+# Пример файла конфигурации .env
+# Скопируйте этот файл в .env и заполните своими данными
+
+# Основные настройки бота
+BOT_TOKEN=ваш_токен_бота_здесь
+DATABASE_PATH=auction_bot.db
+
+# Настройки ЮMoney
+YOOMONEY_RECEIVER=4100118987681575
+YOOMONEY_SECRET=SaTKEuJWPVXJl/JFpXDCHZ4q
+YOOMONEY_NOTIFICATION_URL=http://ваш_домен:5000/yoomoney
+
+# Настройки сервера платежей
+PAYMENT_SERVER_HOST=0.0.0.0
+PAYMENT_SERVER_PORT=5000
+PAYMENT_SERVER_DEBUG=false
+
+# Настройки канала
+CHANNEL_USERNAME=-1002369805353
+CHANNEL_USERNAME_LINK=baraxolkavspb
+CHANNEL_DISPLAY_NAME=Барахолка СПБ
+
+# ID администраторов (через запятую)
+ADMIN_USER_IDS=476589798
+
+# Внешние API (опционально)
+EXTERNAL_API_URL=
+EXTERNAL_API_KEY=
+EXTERNAL_API_TIMEOUT=30
+API_ALLOWED_IPS=
+
+# Настройки логирования
+LOG_LEVEL=INFO
+LOG_FILE=bot.log
+
+# Настройки персистентности
+PERSISTENCE_FILE=auction_state.json
+PERSISTENCE_INTERVAL=300
