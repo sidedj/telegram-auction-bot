@@ -256,6 +256,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await set_admin_commands(user_id)
     
     # Убираем бесплатные начисления - пользователи должны покупать публикации
+    # Обновлено: 05.09.2025 - полностью убрана логика бонусов
 
     balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
 
