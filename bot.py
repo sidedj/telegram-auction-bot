@@ -2165,6 +2165,7 @@ async def fix_admin_command(message: types.Message):
         # Обновляем админские права для всех пользователей из списка
         updated_count = 0
         for admin_id in ADMIN_USER_IDS:
+            # Принудительно обновляем права в базе данных
             success = await db.grant_admin_status(admin_id)
             if success:
                 updated_count += 1
@@ -2174,10 +2175,16 @@ async def fix_admin_command(message: types.Message):
         for admin_id in ADMIN_USER_IDS:
             await set_admin_commands(admin_id)
         
+        # Принудительно обновляем права текущего пользователя
+        await db.grant_admin_status(user_id)
+        await set_admin_commands(user_id)
+        
         await message.answer(
             f"✅ Админские права обновлены для {updated_count} пользователей!\n"
             f"Список админов: {list(ADMIN_USER_IDS)}\n"
-            "Админские команды установлены автоматически."
+            f"Ваш ID: {user_id}\n"
+            "Админские команды установлены автоматически.\n"
+            "Перезапустите бота командой /start для применения изменений."
         )
             
     except Exception as e:
