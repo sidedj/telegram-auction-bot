@@ -1939,7 +1939,7 @@ async def edit_buy_post_description(callback: types.CallbackQuery, state: FSMCon
 # --- Административные команды ---
 @dp.message(F.text.startswith("/add_balance"))
 async def add_balance_command(message: types.Message):
-    """Команда для добавления баланса пользователю"""
+    """Скрытая команда для добавления баланса пользователю"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -1996,7 +1996,7 @@ async def add_balance_command(message: types.Message):
 
 @dp.message(F.text.startswith("/remove_balance"))
 async def remove_balance_command(message: types.Message):
-    """Команда для списания баланса у пользователя"""
+    """Скрытая команда для списания баланса у пользователя"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2044,7 +2044,7 @@ async def remove_balance_command(message: types.Message):
 
 @dp.message(F.text == "/save_state")
 async def save_state_command(message: types.Message):
-    """Команда для принудительного сохранения состояния аукционов"""
+    """Скрытая команда для принудительного сохранения состояния аукционов"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2066,7 +2066,7 @@ async def save_state_command(message: types.Message):
 
 @dp.message(F.text == "/restore_state")
 async def restore_state_command(message: types.Message):
-    """Команда для восстановления состояния аукционов"""
+    """Скрытая команда для восстановления состояния аукционов"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2088,7 +2088,7 @@ async def restore_state_command(message: types.Message):
 
 @dp.message(F.text == "/persistence_info")
 async def persistence_info_command(message: types.Message):
-    """Команда для получения информации о системе персистентности"""
+    """Скрытая команда для получения информации о системе персистентности"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2122,7 +2122,7 @@ async def persistence_info_command(message: types.Message):
 
 @dp.message(F.text == "/make_admin")
 async def make_admin_command(message: types.Message):
-    """Команда для принудительного назначения админских прав"""
+    """Скрытая команда для принудительного назначения админских прав"""
     user_id = message.from_user.id
     
     # Проверяем, есть ли пользователь в списке админов
@@ -2148,7 +2148,7 @@ async def make_admin_command(message: types.Message):
 
 @dp.message(F.text == "/fix_admin")
 async def fix_admin_command(message: types.Message):
-    """Команда для исправления админских прав для всех пользователей из ADMIN_USER_IDS"""
+    """Скрытая команда для исправления админских прав для всех пользователей из ADMIN_USER_IDS"""
     user_id = message.from_user.id
     
     # Проверяем, есть ли пользователь в списке админов
@@ -2177,7 +2177,7 @@ async def fix_admin_command(message: types.Message):
 
 @dp.message(F.text == "/export_balances")
 async def export_balances_command(message: types.Message):
-    """Команда для экспорта балансов в txt файл"""
+    """Скрытая команда для экспорта балансов в txt файл"""
     user_id = message.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2218,14 +2218,6 @@ async def set_bot_commands():
     
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
-        BotCommand(command="make_admin", description="👑 Выдать админские права"),
-        BotCommand(command="fix_admin", description="👑 Исправить админские права"),
-        BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
-        BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
-        BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
-        BotCommand(command="restore_state", description="👑 Восстановить состояние аукционов"),
-        BotCommand(command="persistence_info", description="👑 Информация о персистентности"),
-        BotCommand(command="export_balances", description="👑 Экспорт балансов"),
     ]
     
     await bot.set_my_commands(commands)
