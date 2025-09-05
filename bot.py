@@ -2120,6 +2120,32 @@ async def persistence_info_command(message: types.Message):
         logging.error(f"Error in persistence_info_command: {e}")
         await message.answer("❌ Ошибка при получении информации.")
 
+@dp.message(F.text == "/make_admin")
+async def make_admin_command(message: types.Message):
+    """Команда для принудительного назначения админских прав"""
+    user_id = message.from_user.id
+    
+    # Проверяем, есть ли пользователь в списке админов
+    if user_id not in ADMIN_USER_IDS:
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Принудительно выдаем админские права
+        success = await db.grant_admin_status(user_id)
+        
+        if success:
+            await message.answer(
+                "✅ Админские права успешно выданы!\n"
+                "Перезапустите бота командой /start для применения изменений."
+            )
+        else:
+            await message.answer("❌ Не удалось выдать админские права.")
+            
+    except Exception as e:
+        logging.error(f"Error in make_admin_command: {e}")
+        await message.answer("❌ Произошла ошибка при выдаче админских прав.")
+
 @dp.message(F.text == "/export_balances")
 async def export_balances_command(message: types.Message):
     """Команда для экспорта балансов в txt файл"""
@@ -2163,6 +2189,7 @@ async def set_bot_commands():
     
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="make_admin", description="👑 Выдать админские права"),
         BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
         BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
         BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
