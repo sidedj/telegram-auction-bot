@@ -31,6 +31,7 @@ from database import Database
 from auction_timer import AuctionTimer
 from balance_manager import BalanceManager
 from auction_persistence import AuctionPersistence
+from admin_panel import AdminPanel
 # from api_integration import api_integration  # Отключено
 # from yoomoney_payment import YooMoneyPayment  # Отключено
 # from payment_server import get_notification_queue  # Отключено
@@ -2158,6 +2159,12 @@ async def set_bot_commands():
     
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
+        BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
+        BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
+        BotCommand(command="restore_state", description="👑 Восстановить состояние аукционов"),
+        BotCommand(command="persistence_info", description="👑 Информация о персистентности"),
+        BotCommand(command="export_balances", description="👑 Экспорт балансов"),
     ]
     
     await bot.set_my_commands(commands)
