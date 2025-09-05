@@ -22,7 +22,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InputMediaPhoto,
-    InputMediaVideo
+    InputMediaVideo,
+    BotCommandScopeChat
 )
 
 # Импорты наших модулей
@@ -249,6 +250,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await db.grant_admin_status(user_id)
         user['is_admin'] = True
         logging.info(f"Granted admin status to user {user_id}")
+    
+    # Устанавливаем админские команды для админов
+    if is_admin:
+        await set_admin_commands(user_id)
 
     balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
 
@@ -2165,10 +2170,14 @@ async def fix_admin_command(message: types.Message):
                 updated_count += 1
                 logging.info(f"Granted admin status to user {admin_id}")
         
+        # Устанавливаем админские команды для всех админов
+        for admin_id in ADMIN_USER_IDS:
+            await set_admin_commands(admin_id)
+        
         await message.answer(
             f"✅ Админские права обновлены для {updated_count} пользователей!\n"
             f"Список админов: {list(ADMIN_USER_IDS)}\n"
-            "Перезапустите бота командой /start для применения изменений."
+            "Админские команды установлены автоматически."
         )
             
     except Exception as e:
@@ -2216,12 +2225,40 @@ async def set_bot_commands():
     """Устанавливает команды бота в меню"""
     from aiogram.types import BotCommand
     
+    # Базовые команды для всех пользователей
     commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
     ]
     
     await bot.set_my_commands(commands)
     logging.info("Bot commands set successfully")
+
+async def set_admin_commands(user_id: int):
+    """Устанавливает админские команды для конкретного пользователя"""
+    from aiogram.types import BotCommand
+    
+    # Проверяем, является ли пользователь администратором
+    if user_id not in ADMIN_USER_IDS:
+        return
+    
+    # Админские команды
+    admin_commands = [
+        BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
+        BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
+        BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
+        BotCommand(command="restore_state", description="👑 Восстановить состояние аукционов"),
+        BotCommand(command="persistence_info", description="👑 Информация о персистентности"),
+        BotCommand(command="export_balances", description="👑 Экспорт балансов"),
+        BotCommand(command="make_admin", description="👑 Выдать админские права"),
+        BotCommand(command="fix_admin", description="👑 Исправить админские права"),
+    ]
+    
+    try:
+        await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=user_id))
+        logging.info(f"Admin commands set for user {user_id}")
+    except Exception as e:
+        logging.error(f"Error setting admin commands for user {user_id}: {e}")
 
 # --- Обработка уведомлений от сервера платежей ---
 # async def process_payment_notifications():
