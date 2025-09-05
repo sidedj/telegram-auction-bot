@@ -107,7 +107,8 @@ class Database:
                     'full_name': user[2],
                     'balance': user[3],
                     'created_at': user[4],
-                    'is_admin': bool(user[5])
+                    'is_admin': bool(user[5]),
+                    'is_new_user': False  # Пользователь уже существовал
                 }
             else:
                 # Создаем нового пользователя
@@ -123,7 +124,8 @@ class Database:
                     'full_name': full_name,
                     'balance': 0,
                     'created_at': datetime.now(),
-                    'is_admin': False
+                    'is_admin': False,
+                    'is_new_user': True  # Пользователь только что создан
                 }
 
     async def update_user_balance(self, user_id: int, amount: int, transaction_type: str, description: str = None) -> bool:

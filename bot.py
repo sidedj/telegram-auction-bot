@@ -255,9 +255,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
     if is_admin:
         await set_admin_commands(user_id)
     
-    # Начисляем бонус новым пользователям (1 бесплатное размещение)
+    # Начисляем бонус только новым пользователям (1 бесплатное размещение)
     just_got_bonus = False
-    if user['balance'] == 0 and not user['is_admin']:
+    if user['is_new_user'] and not user['is_admin']:
         await db.update_user_balance(
             user_id=user_id,
             amount=1,
@@ -277,8 +277,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     dynamic_menu = get_main_menu(user['balance'], user['is_admin'])
 
     # Проверяем, новый ли это пользователь (только что получил бонус)
-    # Пользователь считается новым, если он только что получил бонус (баланс изменился с 0 на 1)
-    is_new_user = user['balance'] == 1 and not user['is_admin'] and user.get('just_got_bonus', False)
+    # Пользователь считается новым, если он только что получил бонус
+    is_new_user = user.get('just_got_bonus', False)
     
     welcome_text = f"👋 <b>Добро пожаловать в бот аукционов!</b>\n\n"
     
