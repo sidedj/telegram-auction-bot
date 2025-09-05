@@ -256,6 +256,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await set_admin_commands(user_id)
     
     # Начисляем бонус новым пользователям (1 бесплатное размещение)
+    just_got_bonus = False
     if user['balance'] == 0 and not user['is_admin']:
         await db.update_user_balance(
             user_id=user_id,
@@ -264,7 +265,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
             description="Добро пожаловать! Бонус за регистрацию - 1 бесплатное размещение"
         )
         user['balance'] = 1  # Обновляем локальную копию
+        just_got_bonus = True  # Отмечаем, что пользователь только что получил бонус
         logging.info(f"Welcome bonus granted to new user {user_id}")
+    
+    # Добавляем флаг в объект пользователя
+    user['just_got_bonus'] = just_got_bonus
 
     balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
 
@@ -272,7 +277,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
     dynamic_menu = get_main_menu(user['balance'], user['is_admin'])
 
     # Проверяем, новый ли это пользователь (только что получил бонус)
-    is_new_user = user['balance'] == 1 and not user['is_admin']
+    # Пользователь считается новым, если он только что получил бонус (баланс изменился с 0 на 1)
+    is_new_user = user['balance'] == 1 and not user['is_admin'] and user.get('just_got_bonus', False)
     
     welcome_text = f"👋 <b>Добро пожаловать в бот аукционов!</b>\n\n"
     
