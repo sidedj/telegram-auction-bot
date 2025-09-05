@@ -264,7 +264,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     dynamic_menu = get_main_menu(user['balance'], user['is_admin'])
 
     welcome_text = f"👋 <b>Добро пожаловать в бот аукционов!</b>\n\n"
-    
     welcome_text += f"🎯 <b>Что я умею:</b>\n"
     welcome_text += f"• Создавать аукционы с фото/видео\n"
     welcome_text += f"• Проводить торги в реальном времени\n"
