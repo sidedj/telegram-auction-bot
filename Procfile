@@ -1,1 +1,1 @@
-web: python start_payment_server.py
+web: python bot.py

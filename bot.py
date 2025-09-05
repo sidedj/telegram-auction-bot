@@ -6,6 +6,9 @@ import os
 import queue
 from datetime import datetime, timedelta
 import re
+import threading
+from flask import Flask, request, jsonify
+import sqlite3
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -381,23 +384,44 @@ async def handle_purchase(callback: types.CallbackQuery):
             await callback.answer("Ошибка: не удалось создать ссылку на оплату.", show_alert=True)
             return
         
-        # Создаем клавиатуру с кнопкой оплаты
-        payment_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=payment_url)],
-            [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"check_payment_{plan_id}")]
-        ])
+        # Проверяем, был ли недавний платеж
+        has_recent_payment = await db.has_recent_payment(user_id, minutes=10)
         
-        await callback.message.answer(
-            f"💳 <b>Пополнение баланса - {plan['description']}</b>\n\n"
-            f"💰 <b>Сумма к оплате:</b> {plan['price']} ₽\n\n"
-            f"📝 <b>Инструкция:</b>\n"
-            f"1. Нажмите кнопку '💳 Оплатить {plan['price']}₽'\n"
-            f"2. Выберите способ оплаты на сайте ЮMoney\n"
-            f"3. После успешной оплаты нажмите '🔄 Обновить статус'\n\n"
-            f"✅ <b>Автоматическое начисление:</b> Публикации будут добавлены автоматически после подтверждения оплаты!",
-            reply_markup=payment_keyboard,
-            parse_mode="HTML"
-        )
+        # Создаем клавиатуру с кнопкой оплаты
+        if has_recent_payment:
+            payment_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=payment_url)],
+                [InlineKeyboardButton(text="✅ Платеж прошел", callback_data=f"payment_success_{plan_id}")]
+            ])
+        else:
+            payment_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=payment_url)],
+                [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"check_payment_{plan_id}")]
+            ])
+        
+        if has_recent_payment:
+            # Платеж уже был обработан
+            await callback.message.answer(
+                f"✅ <b>Платеж уже обработан!</b>\n\n"
+                f"💰 <b>Сумма:</b> {plan['price']} ₽\n"
+                f"📝 <b>Описание:</b> {plan['description']}\n\n"
+                f"Публикации уже начислены на ваш счет.",
+                reply_markup=payment_keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            # Обычное сообщение о пополнении
+            await callback.message.answer(
+                f"💳 <b>Пополнение баланса - {plan['description']}</b>\n\n"
+                f"💰 <b>Сумма к оплате:</b> {plan['price']} ₽\n\n"
+                f"📝 <b>Инструкция:</b>\n"
+                f"1. Нажмите кнопку '💳 Оплатить {plan['price']}₽'\n"
+                f"2. Выберите способ оплаты на сайте ЮMoney\n"
+                f"3. После успешной оплаты нажмите '🔄 Обновить статус'\n\n"
+                f"✅ <b>Автоматическое начисление:</b> Публикации будут добавлены автоматически после подтверждения оплаты!",
+                reply_markup=payment_keyboard,
+                parse_mode="HTML"
+            )
 
         await callback.answer()
         
@@ -418,18 +442,46 @@ async def handle_payment_check(callback: types.CallbackQuery):
             await callback.answer("У вас неограниченный баланс как у администратора.", show_alert=True)
             return
         
-        # Показываем текущий баланс
-        await callback.answer(
-            f"💰 <b>Ваш текущий баланс:</b> {user['balance']} публикаций\n\n"
-            f"💡 <b>Подсказка:</b> Публикации начисляются автоматически после подтверждения оплаты ЮMoney. "
-            f"Если прошло более 5 минут, обратитесь к администратору.",
-            show_alert=True,
-            parse_mode="HTML"
-        )
+        # Проверяем, был ли недавний платеж
+        has_recent_payment = await db.has_recent_payment(user_id, minutes=10)
+        
+        if has_recent_payment:
+            # Платеж был обработан - показываем успешное сообщение
+            await callback.answer(
+                f"✅ <b>Платеж прошел!</b>\n\n"
+                f"💰 Ваш текущий баланс: {user['balance']} публикаций\n\n"
+                f"Публикации успешно начислены на ваш счет.",
+                show_alert=True
+            )
+            
+            # Обновляем кнопку на "Платеж прошел"
+            try:
+                await callback.message.edit_reply_markup(
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=f"💳 Оплатить {PAYMENT_PLANS[plan_id]['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={PAYMENT_PLANS[plan_id]['description']}&sum={PAYMENT_PLANS[plan_id]['price']}&label=user_{user_id}")],
+                        [InlineKeyboardButton(text="✅ Платеж прошел", callback_data=f"payment_success_{plan_id}")]
+                    ])
+                )
+            except Exception as e:
+                logging.warning(f"Не удалось обновить кнопку: {e}")
+        else:
+            # Платеж еще не обработан
+            await callback.answer(
+                f"💰 Ваш текущий баланс: {user['balance']} публикаций\n\n"
+                f"💡 Подсказка:\n"
+                f"Публикации начисляются автоматически после подтверждения оплаты ЮMoney.\n"
+                f"Если прошло более 5 минут, обратитесь к администратору.",
+                show_alert=True
+            )
         
     except Exception as e:
         logging.error(f"Error checking payment status: {e}")
         await callback.answer("Ошибка проверки статуса платежа. Попробуйте позже.", show_alert=True)
+
+@dp.callback_query(F.data.startswith("payment_success_"))
+async def handle_payment_success(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Платеж прошел'"""
+    await callback.answer("✅ Платеж уже обработан!", show_alert=True)
 
 @dp.pre_checkout_query()
 async def pre_checkout_query(pre_checkout_q: PreCheckoutQuery):
@@ -2165,5 +2217,182 @@ async def main():
         await bot.session.close()
         logging.info("Bot has been stopped.")
 
-if __name__ == "__main__":
+# --- Flask webhook сервер для Railway ---
+app = Flask(__name__)
+
+def get_user_balance_webhook(user_id: int) -> int:
+    """Получает баланс пользователя для webhook"""
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result else 0
+    except Exception as e:
+        logging.error(f"Ошибка при получении баланса пользователя {user_id}: {e}")
+        return 0
+
+def update_user_balance_webhook(user_id: int, new_balance: int):
+    """Обновляет баланс пользователя для webhook"""
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            # Проверяем, есть ли пользователь в базе
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                # Обновляем существующего пользователя
+                cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+            else:
+                # Создаем нового пользователя
+                cursor.execute("INSERT INTO users (user_id, balance, created_at) VALUES (?, ?, datetime('now'))", (user_id, new_balance))
+            conn.commit()
+            logging.info(f"Баланс пользователя {user_id} обновлен: {new_balance}")
+    except Exception as e:
+        logging.error(f"Ошибка при обновлении баланса пользователя {user_id}: {e}")
+
+def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
+    """Добавляет транзакцию в базу данных для webhook"""
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                (user_id, amount, transaction_type, description)
+            )
+            conn.commit()
+            logging.info(f"Транзакция добавлена: пользователь {user_id}, сумма {amount}, тип {transaction_type}, описание {description}")
+    except Exception as e:
+        logging.error(f"Ошибка при добавлении транзакции: {e}")
+
+def send_telegram_message_webhook(user_id: int, message: str):
+    """Отправляет сообщение пользователю в Telegram для webhook"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {
+            'chat_id': user_id,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        import requests
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            logging.info(f"Сообщение отправлено пользователю {user_id}")
+        else:
+            logging.error(f"Ошибка отправки сообщения: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Ошибка отправки Telegram сообщения: {e}")
+
+@app.route('/health')
+def health():
+    """Проверка здоровья сервера"""
+    return {"status": "ok", "message": "Auction bot is running"}
+
+@app.route('/yoomoney', methods=['POST'])
+def yoomoney_webhook():
+    """Обработка уведомлений от ЮMoney"""
+    try:
+        logging.info("Получено уведомление от ЮMoney")
+        logging.info(f"Данные: {request.form.to_dict()}")
+        
+        # Получаем данные из формы
+        notification_data = request.form.to_dict()
+        
+        # Проверяем, что это реальный платеж (не тестовый)
+        if notification_data.get('test_notification') == 'true':
+            logging.info("Получено тестовое уведомление, пропускаем")
+            return "ok", 200
+        
+        # Для реальных платежей проверяем наличие обязательных полей
+        if not notification_data.get('operation_id') or not notification_data.get('datetime'):
+            logging.warning("Отсутствуют обязательные поля для реального платежа")
+            return "error", 400
+        
+        # Проверяем, что операция подтверждена
+        if notification_data.get('unaccepted') != 'false':
+            logging.warning("Операция не подтверждена")
+            return "error", 400
+        
+        # Получаем сумму и ID пользователя
+        amount = float(notification_data.get('amount', 0))
+        label = notification_data.get('label', '')
+        
+        if not label:
+            logging.warning("Отсутствует label в уведомлении")
+            return "error", 400
+        
+        # Извлекаем ID пользователя из label (формат: user_123456)
+        if not label.startswith('user_'):
+            logging.warning(f"Неверный формат label: {label}")
+            return "error", 400
+        
+        try:
+            user_id = int(label.replace('user_', ''))
+        except ValueError:
+            logging.warning(f"Неверный формат ID пользователя в label: {label}")
+            return "error", 400
+        
+        # Определяем количество публикаций по сумме (учитывая комиссию ЮMoney)
+        if amount >= 48.0 and amount <= 52.0:  # 50₽ с комиссией (48.50₽)
+            publications = 1
+            display_amount = 50
+        elif amount >= 195.0 and amount <= 205.0:  # 200₽ с комиссией (~198₽)
+            publications = 5
+            display_amount = 200
+        elif amount >= 340.0 and amount <= 360.0:  # 350₽ с комиссией (~348₽)
+            publications = 10
+            display_amount = 350
+        elif amount >= 590.0 and amount <= 610.0:  # 600₽ с комиссией (~598₽)
+            publications = 20
+            display_amount = 600
+        else:
+            logging.warning(f"Неизвестная сумма: {amount} ₽ (с учетом комиссии ЮMoney)")
+            return "error", 400
+        
+        # Получаем текущий баланс
+        current_balance = get_user_balance_webhook(user_id)
+        new_balance = current_balance + publications
+        
+        # Обновляем баланс
+        update_user_balance_webhook(user_id, new_balance)
+        
+        # Записываем транзакцию
+        add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽')
+        
+        # Отправляем уведомление пользователю
+        message = f"💰 <b>Платеж получен!</b>\n\n"
+        message += f"Сумма: {display_amount} ₽\n"
+        message += f"Начислено: {publications} публикаций\n"
+        message += f"Ваш баланс: {new_balance} публикаций"
+        
+        send_telegram_message_webhook(user_id, message)
+        
+        logging.info(f"Пользователю {user_id} начислено {publications} публикаций. Новый баланс: {new_balance}")
+        
+        return "ok", 200
+        
+    except Exception as e:
+        logging.error(f"Ошибка при обработке уведомления: {e}")
+        return "error", 500
+
+def run_flask_app():
+    """Запуск Flask приложения"""
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=False)
+
+def run_bot_with_webhook():
+    """Запуск бота с webhook сервером"""
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask_app, daemon=True)
+    flask_thread.start()
+    
+    # Запускаем бота
     asyncio.run(main())
+
+if __name__ == "__main__":
+    # Проверяем, запущен ли на Railway
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        # На Railway - запускаем с webhook
+        run_bot_with_webhook()
+    else:
+        # Локально - обычный polling
+        asyncio.run(main())

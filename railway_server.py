@@ -76,6 +76,28 @@ def update_user_balance(user_id: int, new_balance: int):
     except Exception as e:
         logger.error(f"Ошибка при обновлении баланса пользователя {user_id}: {e}")
 
+def add_transaction(user_id: int, amount: int, transaction_type: str, description: str = None):
+    """Добавляет транзакцию в базу данных"""
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                (user_id, amount, transaction_type, description)
+            )
+            conn.commit()
+            logger.info(f"Транзакция добавлена: пользователь {user_id}, сумма {amount}, тип {transaction_type}, описание {description}")
+            
+            # Проверяем, что транзакция действительно записалась
+            cursor.execute(
+                "SELECT COUNT(*) FROM transactions WHERE user_id = ? AND transaction_type = ?",
+                (user_id, transaction_type)
+            )
+            count = cursor.fetchone()[0]
+            logger.info(f"Всего транзакций типа '{transaction_type}' для пользователя {user_id}: {count}")
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении транзакции: {e}")
+
 def send_telegram_message(user_id: int, message: str):
     """Отправляет сообщение пользователю в Telegram"""
     try:
@@ -159,9 +181,6 @@ def yoomoney_webhook():
         current_balance = get_user_balance(user_id)
         new_balance = current_balance + publications
         
-        # Обновляем баланс
-        update_user_balance(user_id, new_balance)
-        
         # Определяем номинальную сумму для отображения клиенту
         if amount >= 48.0 and amount <= 52.0:
             display_amount = 50
@@ -173,6 +192,12 @@ def yoomoney_webhook():
             display_amount = 600
         else:
             display_amount = amount  # fallback
+        
+        # Обновляем баланс
+        update_user_balance(user_id, new_balance)
+        
+        # Записываем транзакцию
+        add_transaction(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽')
         
         # Отправляем уведомление пользователю (показываем номинальную сумму)
         message = f"💰 <b>Платеж получен!</b>\n\n"

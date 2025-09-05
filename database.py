@@ -493,3 +493,17 @@ class Database:
             )
             result = await cursor.fetchone()
             return result[0] if result else 0
+
+    async def has_recent_payment(self, user_id: int, minutes: int = 10) -> bool:
+        """Проверить, был ли недавний платеж пользователя"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """SELECT COUNT(*) FROM transactions 
+                   WHERE user_id = ? AND transaction_type = 'purchase' 
+                   AND created_at > datetime('now', '-{} minutes')""".format(minutes),
+                (user_id,)
+            )
+            result = await cursor.fetchone()
+            count = result[0] if result else 0
+            logging.info(f"Проверка недавних платежей для пользователя {user_id}: найдено {count} транзакций за последние {minutes} минут")
+            return count > 0
