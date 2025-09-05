@@ -241,10 +241,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user = await db.get_or_create_user(user_id, username, full_name)
     
     # Проверяем, является ли пользователь администратором
+    logging.info(f"Checking admin status for user {user_id}")
+    logging.info(f"ADMIN_USER_IDS: {ADMIN_USER_IDS} (type: {type(ADMIN_USER_IDS)})")
     is_admin = user_id in ADMIN_USER_IDS
+    logging.info(f"User {user_id} is admin: {is_admin}")
     if is_admin and not user['is_admin']:
         await db.grant_admin_status(user_id)
         user['is_admin'] = True
+        logging.info(f"Granted admin status to user {user_id}")
 
     balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
 

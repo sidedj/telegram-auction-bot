@@ -47,7 +47,9 @@ def load_config():
     
     # ID администраторов
     admin_ids_str = os.getenv("ADMIN_USER_IDS", "476589798")
+    print(f"DEBUG: admin_ids_str = '{admin_ids_str}'")
     ADMIN_USER_IDS = {int(x.strip()) for x in admin_ids_str.split(",") if x.strip()}
+    print(f"DEBUG: ADMIN_USER_IDS = {ADMIN_USER_IDS}")
     
     # Путь к базе данных
     DATABASE_PATH = os.getenv("DATABASE_PATH", "auction_bot.db")
