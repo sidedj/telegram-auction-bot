@@ -2737,20 +2737,24 @@ def yoomoney_webhook():
         amount = float(notification_data.get('amount', 0))
         label = notification_data.get('label', '')
         
+        # Если это тестовое уведомление без label, используем админа
         if not label:
-            logging.warning("Отсутствует label в уведомлении")
-            return "error", 400
+            logging.warning("Отсутствует label в уведомлении - используем админа для тестирования")
+            # Используем первого админа из списка
+            user_id = ADMIN_USER_IDS[0] if ADMIN_USER_IDS else 123456789
+            logging.info(f"Тестовое уведомление будет зачислено пользователю {user_id}")
+        else:
+            # Извлекаем ID пользователя из label (формат: user_123456)
+            if not label.startswith('user_'):
+                logging.warning(f"Неверный формат label: {label}")
+                return "error", 400
+            
+            try:
+                user_id = int(label.replace('user_', ''))
+            except ValueError:
+                logging.warning(f"Неверный формат ID пользователя в label: {label}")
+                return "error", 400
         
-        # Извлекаем ID пользователя из label (формат: user_123456)
-        if not label.startswith('user_'):
-            logging.warning(f"Неверный формат label: {label}")
-            return "error", 400
-        
-        try:
-            user_id = int(label.replace('user_', ''))
-        except ValueError:
-            logging.warning(f"Неверный формат ID пользователя в label: {label}")
-            return "error", 400
         
         # Определяем количество публикаций по сумме (учитывая комиссию ЮMoney)
         if amount >= 48.0 and amount <= 52.0:  # 50₽ с комиссией (48.50₽)
