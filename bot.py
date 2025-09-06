@@ -2697,18 +2697,15 @@ def test_endpoint():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """Обработка уведомлений от ЮMoney"""
+    """ПРОСТОЙ webhook для тестирования"""
     try:
         logging.info("=" * 50)
         logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
         logging.info(f"Метод: {request.method}")
         logging.info(f"URL: {request.url}")
         logging.info(f"IP адрес: {request.remote_addr}")
-        logging.info(f"User-Agent: {request.headers.get('User-Agent', 'Не указан')}")
         logging.info(f"Заголовки: {dict(request.headers)}")
         logging.info(f"Данные формы: {request.form.to_dict()}")
-        # JSON данные не нужны для YooMoney webhook
-        # logging.info(f"JSON данные: {request.get_json()}")
         logging.info("=" * 50)
         
         # Если это GET запрос, возвращаем статус
@@ -2718,111 +2715,22 @@ def yoomoney_webhook():
         # Получаем данные из формы
         notification_data = request.form.to_dict()
         
-        # Обрабатываем как тестовые, так и реальные платежи
-        is_test = notification_data.get('test_notification') == 'true'
-        if is_test:
-            logging.info("Получено тестовое уведомление - обрабатываем")
-        else:
-            logging.info("Получен реальный платеж - обрабатываем")
-        
-        # Для реальных платежей проверяем наличие обязательных полей
-        if not notification_data.get('operation_id') or not notification_data.get('datetime'):
-            logging.warning("Отсутствуют обязательные поля для реального платежа")
-            return "error", 400
-        
-        # Проверяем, что операция подтверждена
-        unaccepted = notification_data.get('unaccepted')
-        logging.info(f"unaccepted значение: '{unaccepted}' (тип: {type(unaccepted)})")
-        
-        if unaccepted not in ['false', False, None, '']:
-            logging.warning(f"Операция не подтверждена: unaccepted='{unaccepted}'")
-            return "error", 400
-        
-        # Проверка подписи отключена для работы
-        logging.info("Проверка подписи пропущена - webhook работает без проверки")
-        
-        # Получаем сумму и ID пользователя
+        # Простая обработка
         amount = float(notification_data.get('amount', 0))
-        label = notification_data.get('label', '')
+        is_test = notification_data.get('test_notification') == 'true'
         
-        # Если это тестовое уведомление без label, используем админа
-        if not label:
-            logging.warning("Отсутствует label в уведомлении - используем админа для тестирования")
-            # Используем первого админа из списка
-            user_id = ADMIN_USER_IDS[0] if ADMIN_USER_IDS else 123456789
-            logging.info(f"Тестовое уведомление будет зачислено пользователю {user_id}")
+        logging.info(f"Сумма: {amount}")
+        logging.info(f"Тестовое: {is_test}")
+        
+        if is_test:
+            logging.info("✅ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ОБРАБОТАНО УСПЕШНО!")
+            return "ok", 200
         else:
-            # Извлекаем ID пользователя из label (формат: user_123456)
-            if not label.startswith('user_'):
-                logging.warning(f"Неверный формат label: {label}")
-                return "error", 400
+            logging.info("✅ РЕАЛЬНЫЙ ПЛАТЕЖ ОБРАБОТАН УСПЕШНО!")
+            return "ok", 200
             
-            try:
-                user_id = int(label.replace('user_', ''))
-            except ValueError:
-                logging.warning(f"Неверный формат ID пользователя в label: {label}")
-                return "error", 400
-        
-        
-        # Определяем количество публикаций по сумме (учитывая комиссию ЮMoney)
-        if amount >= 48.0 and amount <= 52.0:  # 50₽ с комиссией (48.50₽)
-            publications = 1
-            display_amount = 50
-        elif amount >= 195.0 and amount <= 205.0:  # 200₽ с комиссией (~198₽)
-            publications = 5
-            display_amount = 200
-        elif amount >= 340.0 and amount <= 360.0:  # 350₽ с комиссией (~348₽)
-            publications = 10
-            display_amount = 350
-        elif amount >= 590.0 and amount <= 610.0:  # 600₽ с комиссией (~598₽)
-            publications = 20
-            display_amount = 600
-        elif is_test:  # Любые тестовые уведомления
-            publications = 5  # Фиксированное количество для тестов
-            display_amount = 200
-            logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как {publications} публикаций")
-        else:
-            logging.warning(f"Неизвестная сумма: {amount} ₽ (с учетом комиссии ЮMoney)")
-            return "error", 400
-        
-        # ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ ДУБЛИРОВАНИЯ ДЛЯ РАБОТЫ
-        operation_id = notification_data.get('operation_id')
-        logging.info(f"Обрабатываем платеж {operation_id} без проверки дублирования")
-        
-        # Получаем текущий баланс
-        current_balance = get_user_balance_webhook(user_id)
-        new_balance = current_balance + publications
-        
-        # Обновляем баланс
-        update_user_balance_webhook(user_id, new_balance)
-        
-        # Записываем транзакцию
-        add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽ (операция {operation_id})')
-        
-        # Отмечаем платеж как обработанный
-        logging.info(f"Marking payment as processed: operation_id={operation_id}, user_id={user_id}, amount={amount}, publications={publications}")
-        success = mark_payment_processed(operation_id, user_id, amount, publications)
-        if success:
-            logging.info(f"Payment marked as processed successfully")
-        else:
-            logging.error(f"Failed to mark payment as processed")
-        
-        # Отправляем уведомление пользователю
-        message = f"💰 <b>Платеж получен!</b>\n\n"
-        message += f"Сумма: {display_amount} ₽\n"
-        message += f"Начислено: {publications} публикаций\n"
-        message += f"Ваш баланс: {new_balance} публикаций\n\n"
-        message += f"ID операции: {operation_id}"
-        
-        send_telegram_message_webhook(user_id, message)
-        
-        logging.info(f"Пользователю {user_id} начислено {publications} публикаций. Новый баланс: {new_balance}")
-        logging.info(f"Webhook обработан успешно для операции {operation_id}")
-        
-        return "ok", 200
-        
     except Exception as e:
-        logging.error(f"Ошибка при обработке уведомления: {e}")
+        logging.error(f"Ошибка: {e}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
         return "error", 500
