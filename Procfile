@@ -1,1 +1,1 @@
-web: python webhook_only.py
+web: python super_simple_webhook.py
