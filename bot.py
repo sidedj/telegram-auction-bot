@@ -2824,44 +2824,12 @@ def yoomoney_webhook():
         try:
             import sqlite3
             
-            # Инициализируем базу данных если нужно
+            # Создаем таблицы если их нет (простое решение)
             with sqlite3.connect(DATABASE_PATH) as db_conn:
                 cursor = db_conn.cursor()
-                
-                # Создаем таблицы если их нет
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        user_id INTEGER PRIMARY KEY,
-                        username TEXT,
-                        full_name TEXT,
-                        balance INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        is_admin BOOLEAN DEFAULT FALSE
-                    )
-                """)
-                
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS transactions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
-                        amount INTEGER NOT NULL,
-                        transaction_type TEXT NOT NULL,
-                        description TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id)
-                    )
-                """)
-                
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS processed_payments (
-                        operation_id TEXT PRIMARY KEY,
-                        user_id INTEGER,
-                        amount REAL,
-                        publications INTEGER,
-                        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
+                cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
+                cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                cursor.execute("CREATE TABLE IF NOT EXISTS processed_payments (operation_id TEXT PRIMARY KEY, user_id INTEGER, amount REAL, publications INTEGER, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
                 db_conn.commit()
             
             # Синхронная работа с базой данных
