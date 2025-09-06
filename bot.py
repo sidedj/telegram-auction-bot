@@ -2770,25 +2770,100 @@ def health():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """Максимально простой webhook"""
+    """Простой webhook - сразу начисляет публикации"""
     try:
-        logging.info("=== WEBHOOK VERSION 2.0 ===")
+        logging.info("=== WEBHOOK VERSION 3.0 - ПРОСТОЕ НАЧИСЛЕНИЕ ===")
         
         if request.method == 'GET':
             return "OK"
         
         # Получаем данные
         data = request.form.to_dict()
-        logging.info(f"Данные: {data}")
+        logging.info(f"📥 Получен платеж: {data}")
         
-        # Если есть данные, обрабатываем
-        if data and 'operation_id' in data:
-            logging.info("✅ Платеж получен и обработан")
+        # Проверяем, что это не тестовое уведомление
+        if data.get('test_notification') == 'true':
+            logging.info("✅ Тестовое уведомление - пропускаем")
+            return "OK"
+        
+        # Получаем данные платежа
+        operation_id = data.get('operation_id', '')
+        amount = float(data.get('amount', 0))
+        withdraw_amount = float(data.get('withdraw_amount', amount))
+        label = data.get('label', '')
+        
+        # Определяем user_id из label
+        user_id = None
+        if label and label.startswith('user_'):
+            try:
+                user_id = int(label.replace('user_', ''))
+            except ValueError:
+                pass
+        
+        if not user_id:
+            logging.error("❌ Не удалось определить user_id")
+            return "OK"
+        
+        # Определяем количество публикаций по тарифу
+        if 46 <= withdraw_amount <= 54:  # 50₽
+            publications = 1
+        elif 184 <= withdraw_amount <= 216:  # 200₽
+            publications = 5
+        elif 322 <= withdraw_amount <= 378:  # 350₽
+            publications = 10
+        elif 552 <= withdraw_amount <= 648:  # 600₽
+            publications = 20
+        else:
+            publications = int(withdraw_amount)
+        
+        # Начисляем публикации
+        try:
+            import aiosqlite
+            import asyncio
+            
+            async def add_publications():
+                async with aiosqlite.connect(DATABASE_PATH) as db_conn:
+                    # Создаем пользователя
+                    await db_conn.execute(
+                        "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                        (user_id, None, None, 0, False)
+                    )
+                    
+                    # Начисляем публикации
+                    await db_conn.execute(
+                        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                        (publications, user_id)
+                    )
+                    
+                    # Записываем транзакцию
+                    await db_conn.execute(
+                        "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                        (user_id, publications, "yoomoney_payment", f"Пополнение: {withdraw_amount}₽ → {publications} публикаций")
+                    )
+                    
+                    await db_conn.commit()
+            
+            # Запускаем в новом потоке
+            import threading
+            def run_async():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(add_publications())
+                loop.close()
+            
+            thread = threading.Thread(target=run_async)
+            thread.start()
+            thread.join(timeout=5)
+            
+            logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка начисления: {e}")
         
         return "OK"
         
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logging.error(f"❌ Ошибка webhook: {e}")
         return "OK"
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
