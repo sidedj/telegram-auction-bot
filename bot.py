@@ -509,12 +509,13 @@ async def add_balance_command(message: types.Message):
         
         # Отправляем уведомление пользователю
         try:
-            from notifications import send_balance_notification
-            await send_balance_notification(
-                user_id=target_user_id,
-                amount=0,  # Для админского начисления сумма не важна
-                publications=amount,
-                new_balance=new_balance
+            await bot.send_message(
+                target_user_id,
+                f"✅ <b>Ваш баланс пополнен!</b>\n\n"
+                f"💰 Зачислено: {amount} публикаций\n"
+                f"💳 Текущий баланс: {new_balance} публикаций\n\n"
+                f"📝 Причина: Начислено администратором",
+                parse_mode="HTML"
             )
             logging.info(f"✅ Уведомление о пополнении баланса отправлено пользователю {target_user_id}")
         except Exception as e:
