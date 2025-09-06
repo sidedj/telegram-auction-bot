@@ -2842,19 +2842,23 @@ def webhook_new():
             except:
                 pass
         
-        # Определяем количество публикаций по сумме
+        # Определяем количество публикаций по сумме с учетом комиссии YooMoney
         amount = float(data.get('amount', '0'))
         withdraw_amount = float(data.get('withdraw_amount', amount))
         
-        # Тарифы: 50₽ = 1 публикация, 200₽ = 4 публикации, 350₽ = 7 публикаций
-        if withdraw_amount >= 350:
-            publications = 7
-        elif withdraw_amount >= 200:
-            publications = 4
-        elif withdraw_amount >= 50:
+        # Используем withdraw_amount (сумма без комиссии) для определения тарифа
+        # Комиссия YooMoney: 0% - 8%, поэтому расширяем диапазоны
+        if 46 <= withdraw_amount <= 54:  # Тариф 50₽ (комиссия до 8%)
             publications = 1
+        elif 184 <= withdraw_amount <= 216:  # Тариф 200₽ (комиссия до 8%)
+            publications = 4
+        elif 322 <= withdraw_amount <= 378:  # Тариф 350₽ (комиссия до 8%)
+            publications = 7
+        elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
+            publications = 12
         else:
-            publications = 0
+            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
+            publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
         
         if publications > 0:
             try:
@@ -2909,7 +2913,11 @@ def webhook_new():
                     
                     # Текст уведомления
                     text = f"💰 <b>Баланс пополнен!</b>\n\n"
-                    text += f"💳 Сумма: {withdraw_amount}₽\n"
+                    if amount != withdraw_amount:
+                        text += f"💳 Сумма: {amount}₽ (комиссия: {amount - withdraw_amount:.2f}₽)\n"
+                        text += f"💰 К зачислению: {withdraw_amount}₽\n"
+                    else:
+                        text += f"💳 Сумма: {withdraw_amount}₽\n"
                     text += f"📝 Публикаций: +{publications}\n"
                     text += f"💎 Новый баланс: {new_balance} публикаций"
                     
