@@ -2697,42 +2697,40 @@ def test_endpoint():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """ПРОСТОЙ webhook для тестирования"""
+    """МИНИМАЛЬНЫЙ webhook для тестирования"""
     try:
-        logging.info("=" * 50)
-        logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
-        logging.info(f"Метод: {request.method}")
-        logging.info(f"URL: {request.url}")
-        logging.info(f"IP адрес: {request.remote_addr}")
-        logging.info(f"Заголовки: {dict(request.headers)}")
-        logging.info(f"Данные формы: {request.form.to_dict()}")
-        logging.info("=" * 50)
+        logger.info("=" * 50)
+        logger.info("ПОЛУЧЕН ЗАПРОС")
+        logger.info(f"Метод: {request.method}")
+        logger.info(f"URL: {request.url}")
+        logger.info(f"IP: {request.remote_addr}")
+        logger.info(f"Заголовки: {dict(request.headers)}")
         
-        # Если это GET запрос, возвращаем статус
         if request.method == 'GET':
-            return {"status": "ok", "message": "YooMoney webhook is ready"}
+            return {"status": "ok", "message": "Webhook ready"}
         
-        # Получаем данные из формы
-        notification_data = request.form.to_dict()
+        # Получаем данные
+        form_data = request.form.to_dict()
+        logger.info(f"Данные формы: {form_data}")
         
         # Простая обработка
-        amount = float(notification_data.get('amount', 0))
-        is_test = notification_data.get('test_notification') == 'true'
+        amount = form_data.get('amount', '0')
+        is_test = form_data.get('test_notification') == 'true'
         
-        logging.info(f"Сумма: {amount}")
-        logging.info(f"Тестовое: {is_test}")
+        logger.info(f"Сумма: {amount}")
+        logger.info(f"Тестовое: {is_test}")
         
         if is_test:
-            logging.info("✅ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ОБРАБОТАНО УСПЕШНО!")
+            logger.info("✅ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ОБРАБОТАНО УСПЕШНО!")
             return "ok", 200
         else:
-            logging.info("✅ РЕАЛЬНЫЙ ПЛАТЕЖ ОБРАБОТАН УСПЕШНО!")
+            logger.info("✅ РЕАЛЬНЫЙ ПЛАТЕЖ ОБРАБОТАН УСПЕШНО!")
             return "ok", 200
             
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка: {e}")
         import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return "error", 500
 
 def run_flask_app():
