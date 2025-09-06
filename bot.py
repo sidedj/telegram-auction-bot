@@ -2783,41 +2783,38 @@ def yoomoney_webhook():
         
         # Проверяем, что это не тестовое уведомление
         if data.get('test_notification') == 'true':
-            logging.info("✅ Тестовое уведомление - пропускаем")
-            return "OK"
-        
-        # Получаем данные платежа
-        operation_id = data.get('operation_id', '')
-        amount = float(data.get('amount', 0))
-        withdraw_amount = float(data.get('withdraw_amount', amount))
-        label = data.get('label', '')
-        
-        # Определяем user_id из label
-        user_id = None
-        if label and label.startswith('user_'):
-            try:
-                user_id = int(label.replace('user_', ''))
-            except ValueError:
-                pass
-        
-        # Если user_id не определен, используем админа для тестовых платежей
-        if not user_id:
-            user_id = 476589798  # ID админа
-            logging.info(f"🔧 Тестовый платеж - используем админа {user_id}")
+            logging.info("🔧 Тестовое уведомление - обрабатываем для админа")
+            # Для тестовых уведомлений используем админа
+            user_id = 476589798
+            withdraw_amount = 50.0  # Тестовая сумма
+            publications = 1  # Тестовая публикация
+        else:
+            # Обычная обработка для реальных платежей
+            user_id = None
+            if label and label.startswith('user_'):
+                try:
+                    user_id = int(label.replace('user_', ''))
+                except ValueError:
+                    pass
+            
+            # Если user_id не определен, используем админа
+            if not user_id:
+                user_id = 476589798
+                logging.info(f"🔧 Платеж без label - используем админа {user_id}")
+            
+            # Определяем количество публикаций по тарифу
+            if 46 <= withdraw_amount <= 54:  # 50₽
+                publications = 1
+            elif 184 <= withdraw_amount <= 216:  # 200₽
+                publications = 5
+            elif 322 <= withdraw_amount <= 378:  # 350₽
+                publications = 10
+            elif 552 <= withdraw_amount <= 648:  # 600₽
+                publications = 20
+            else:
+                publications = int(withdraw_amount)
         
         logging.info(f"👤 Обрабатываем платеж для пользователя {user_id}")
-        
-        # Определяем количество публикаций по тарифу
-        if 46 <= withdraw_amount <= 54:  # 50₽
-            publications = 1
-        elif 184 <= withdraw_amount <= 216:  # 200₽
-            publications = 5
-        elif 322 <= withdraw_amount <= 378:  # 350₽
-            publications = 10
-        elif 552 <= withdraw_amount <= 648:  # 600₽
-            publications = 20
-        else:
-            publications = int(withdraw_amount)
         
         # Начисляем публикации
         try:
