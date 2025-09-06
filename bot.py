@@ -2712,10 +2712,12 @@ def yoomoney_webhook():
         # Получаем данные из формы
         notification_data = request.form.to_dict()
         
-        # Проверяем, что это реальный платеж (не тестовый)
-        if notification_data.get('test_notification') == 'true':
-            logging.info("Получено тестовое уведомление, пропускаем")
-            return "ok", 200
+        # Обрабатываем как тестовые, так и реальные платежи
+        is_test = notification_data.get('test_notification') == 'true'
+        if is_test:
+            logging.info("Получено тестовое уведомление - обрабатываем")
+        else:
+            logging.info("Получен реальный платеж - обрабатываем")
         
         # Для реальных платежей проверяем наличие обязательных полей
         if not notification_data.get('operation_id') or not notification_data.get('datetime'):
