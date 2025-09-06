@@ -2734,12 +2734,6 @@ def yoomoney_webhook():
             logging.warning(f"Неверный формат ID пользователя в label: {label}")
             return "error", 400
         
-        # Проверяем, не обрабатывали ли мы уже этот платеж
-        operation_id = notification_data.get('operation_id')
-        if is_payment_processed(operation_id):
-            logging.info(f"Платеж {operation_id} уже был обработан")
-            return "ok", 200
-        
         # Определяем количество публикаций по сумме (учитывая комиссию ЮMoney)
         if amount >= 48.0 and amount <= 52.0:  # 50₽ с комиссией (48.50₽)
             publications = 1
@@ -2756,6 +2750,27 @@ def yoomoney_webhook():
         else:
             logging.warning(f"Неизвестная сумма: {amount} ₽ (с учетом комиссии ЮMoney)")
             return "error", 400
+        
+        # Проверяем, не обрабатывали ли мы уже этот платеж
+        operation_id = notification_data.get('operation_id')
+        if is_payment_processed(operation_id):
+            logging.info(f"Платеж {operation_id} уже был обработан")
+            # Получаем текущий баланс пользователя для отображения
+            try:
+                import asyncio
+                current_balance = asyncio.run(db.get_user_balance(user_id))
+                asyncio.run(bot.send_message(
+                    user_id, 
+                    f"✅ Платеж уже обработан!\n\n"
+                    f"💰 Сумма: {display_amount} ₽\n"
+                    f"📝 Описание: {publications} публикаций\n\n"
+                    f"📊 Ваш текущий баланс: {current_balance} публикаций\n\n"
+                    f"Публикации уже начислены на ваш счет.",
+                    reply_markup=asyncio.run(get_user_main_menu(user_id))
+                ))
+            except Exception as e:
+                logging.error(f"Ошибка при отправке сообщения о повторном платеже: {e}")
+            return "ok", 200
         
         # Получаем текущий баланс
         current_balance = get_user_balance_webhook(user_id)
