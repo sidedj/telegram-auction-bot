@@ -2690,7 +2690,7 @@ def test_endpoint():
         "data": request.form.to_dict() if request.form else request.get_json()
     }
 
-@app.route('/yoomoney', methods=['POST'])
+@app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
     try:
@@ -2699,6 +2699,10 @@ def yoomoney_webhook():
         logging.info(f"Данные формы: {request.form.to_dict()}")
         logging.info(f"Метод: {request.method}")
         logging.info(f"IP адрес: {request.remote_addr}")
+        
+        # Если это GET запрос, возвращаем статус
+        if request.method == 'GET':
+            return {"status": "ok", "message": "YooMoney webhook is ready"}
         
         # Получаем данные из формы
         notification_data = request.form.to_dict()
