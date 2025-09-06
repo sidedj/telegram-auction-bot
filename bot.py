@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta
 import re
 import threading
-from quart import Quart, request, jsonify
+from flask import Flask, request, jsonify
 import sqlite3
 
 from aiogram import Bot, Dispatcher, F, types
@@ -27,7 +27,7 @@ from aiogram.types import (
 
 # Импорты наших модулей
 from config import load_config, DISABLE_SUBSCRIPTION_CHECK
-from database_postgres import Database
+from database import Database
 from auction_timer import AuctionTimer
 from balance_manager import BalanceManager
 from auction_persistence import AuctionPersistence
@@ -93,7 +93,7 @@ ADMIN_USER_IDS = config['ADMIN_USER_IDS']
 DATABASE_PATH = config['DATABASE_PATH']
 
 # Инициализация базы данных
-db = Database()  # Использует DATABASE_URL из переменных окружения
+db = Database(DATABASE_PATH)
 
 # Инициализация менеджера балансов
 balance_manager = BalanceManager(DATABASE_PATH)
@@ -2570,38 +2570,51 @@ async def main():
         logging.info("Bot has been stopped.")
 
 # --- Flask webhook сервер для Railway ---
-app = Quart(__name__)
+app = Flask(__name__)
 
-async def get_user_balance_webhook(user_id: int) -> int:
+def get_user_balance_webhook(user_id: int) -> int:
     """Получает баланс пользователя для webhook"""
     try:
-        user = await db.get_or_create_user(user_id)
-        return user['balance'] if user else 0
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            return result[0] if result else 0
     except Exception as e:
         logging.error(f"Ошибка при получении баланса пользователя {user_id}: {e}")
         return 0
 
-async def update_user_balance_webhook(user_id: int, new_balance: int):
+def update_user_balance_webhook(user_id: int, new_balance: int):
     """Обновляет баланс пользователя для webhook"""
     try:
-        success = await db.update_user_balance(user_id, new_balance)
-        if success:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            # Проверяем, есть ли пользователь в базе
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                # Обновляем существующего пользователя
+                cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+            else:
+                # Создаем нового пользователя
+                cursor.execute("INSERT INTO users (user_id, balance, created_at) VALUES (?, ?, datetime('now'))", (user_id, new_balance))
+            conn.commit()
             logging.info(f"Баланс пользователя {user_id} обновлен: {new_balance}")
-        return success
     except Exception as e:
         logging.error(f"Ошибка при обновлении баланса пользователя {user_id}: {e}")
-        return False
 
-async def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
+def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
     """Добавляет транзакцию в базу данных для webhook"""
     try:
-        success = await db.add_transaction(user_id, amount, transaction_type, description)
-        if success:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                (user_id, amount, transaction_type, description)
+            )
+            conn.commit()
             logging.info(f"Транзакция добавлена: пользователь {user_id}, сумма {amount}, тип {transaction_type}, описание {description}")
-        return success
     except Exception as e:
         logging.error(f"Ошибка при добавлении транзакции: {e}")
-        return False
 
 def send_telegram_message_webhook(user_id: int, message: str):
     """Отправляет сообщение пользователю в Telegram для webhook"""
@@ -2621,29 +2634,40 @@ def send_telegram_message_webhook(user_id: int, message: str):
     except Exception as e:
         logging.error(f"Ошибка отправки Telegram сообщения: {e}")
 
-async def is_payment_processed(operation_id: str) -> bool:
+def is_payment_processed(operation_id: str) -> bool:
     """Проверяет, был ли уже обработан платеж с данным operation_id"""
     try:
-        import asyncpg
-        conn = await asyncpg.connect(os.getenv('DATABASE_URL'))
-        try:
-            row = await conn.fetchrow(
-                "SELECT 1 FROM processed_payments WHERE operation_id = $1", operation_id
-            )
-            return row is not None
-        finally:
-            await conn.close()
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM processed_payments WHERE operation_id = ?", (operation_id,))
+            return cursor.fetchone() is not None
     except Exception as e:
         logging.error(f"Ошибка при проверке обработанных платежей: {e}")
         return False
 
-async def mark_payment_processed(operation_id: str, user_id: int, amount: float, publications: int):
+def mark_payment_processed(operation_id: str, user_id: int, amount: float, publications: int):
     """Отмечает платеж как обработанный"""
     try:
-        success = await db.mark_payment_processed(operation_id, user_id, amount, publications)
-        if success:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            # Создаем таблицу, если её нет
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_payments (
+                    operation_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    amount REAL,
+                    publications INTEGER,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Добавляем запись о платеже
+            cursor.execute(
+                "INSERT OR IGNORE INTO processed_payments (operation_id, user_id, amount, publications) VALUES (?, ?, ?, ?)",
+                (operation_id, user_id, amount, publications)
+            )
+            conn.commit()
             logging.info(f"Платеж {operation_id} отмечен как обработанный")
-        return success
+            return True
     except Exception as e:
         logging.error(f"Ошибка при отметке платежа как обработанного: {e}")
         return False
@@ -2664,7 +2688,7 @@ def yoomoney_test():
     }
 
 @app.route('/yoomoney', methods=['POST'])
-async def yoomoney_webhook():
+def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
     try:
         logging.info("Получено уведомление от ЮMoney")
@@ -2727,7 +2751,7 @@ async def yoomoney_webhook():
         
         # Проверяем, не обрабатывали ли мы уже этот платеж
         operation_id = notification_data.get('operation_id')
-        if await is_payment_processed(operation_id):
+        if is_payment_processed(operation_id):
             logging.info(f"Платеж {operation_id} уже был обработан")
             return "ok", 200
         
@@ -2749,18 +2773,18 @@ async def yoomoney_webhook():
             return "error", 400
         
         # Получаем текущий баланс
-        current_balance = await get_user_balance_webhook(user_id)
+        current_balance = get_user_balance_webhook(user_id)
         new_balance = current_balance + publications
         
         # Обновляем баланс
-        await update_user_balance_webhook(user_id, new_balance)
+        update_user_balance_webhook(user_id, new_balance)
         
         # Записываем транзакцию
-        await add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽ (операция {operation_id})')
+        add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽ (операция {operation_id})')
         
         # Отмечаем платеж как обработанный
         logging.info(f"Marking payment as processed: operation_id={operation_id}, user_id={user_id}, amount={amount}, publications={publications}")
-        success = await mark_payment_processed(operation_id, user_id, amount, publications)
+        success = mark_payment_processed(operation_id, user_id, amount, publications)
         if success:
             logging.info(f"Payment marked as processed successfully")
         else:
@@ -2783,27 +2807,25 @@ async def yoomoney_webhook():
         logging.error(f"Ошибка при обработке уведомления: {e}")
         return "error", 500
 
-async def run_quart_app():
-    """Запуск Quart приложения"""
+def run_flask_app():
+    """Запуск Flask приложения"""
     port = int(os.getenv("PORT", 8080))
-    await app.run_task(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)
 
-async def run_bot_with_webhook():
+def run_bot_with_webhook():
     """Запуск бота с webhook сервером"""
-    # Запускаем Quart в отдельной задаче
-    quart_task = asyncio.create_task(run_quart_app())
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask_app, daemon=True)
+    flask_thread.start()
     
     # Запускаем бота
-    bot_task = asyncio.create_task(main())
-    
-    # Ждем завершения обеих задач
-    await asyncio.gather(quart_task, bot_task)
+    asyncio.run(main())
 
 if __name__ == "__main__":
     # Проверяем, запущен ли на Railway
     if os.getenv("RAILWAY_ENVIRONMENT"):
         # На Railway - запускаем с webhook
-        asyncio.run(run_bot_with_webhook())
+        run_bot_with_webhook()
     else:
         # Локально - обычный polling
         asyncio.run(main())
