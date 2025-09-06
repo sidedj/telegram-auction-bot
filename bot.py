@@ -2791,6 +2791,7 @@ def yoomoney_webhook():
         else:
             # Обычная обработка для реальных платежей
             user_id = None
+            label = data.get('label', '')
             if label and label.startswith('user_'):
                 try:
                     user_id = int(label.replace('user_', ''))
@@ -2801,6 +2802,9 @@ def yoomoney_webhook():
             if not user_id:
                 user_id = 476589798
                 logging.info(f"🔧 Платеж без label - используем админа {user_id}")
+            
+            # Получаем сумму платежа
+            withdraw_amount = float(data.get('withdraw_amount', data.get('amount', 0)))
             
             # Определяем количество публикаций по тарифу
             if 46 <= withdraw_amount <= 54:  # 50₽
