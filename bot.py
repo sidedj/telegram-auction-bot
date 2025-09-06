@@ -2813,7 +2813,129 @@ def health():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """Простой webhook - сразу начисляет публикации"""
+    """Основной webhook для YooMoney - обрабатывает все платежи"""
+    logging.info("=== YOOMONEY WEBHOOK VERSION 15.0 - ОСНОВНОЙ ENDPOINT ===")
+    
+    if request.method == 'GET':
+        return "OK"
+    
+    # Получаем данные из формы
+    data = request.form.to_dict()
+    logging.info(f"📥 Получен платеж: {data}")
+    
+    # Обрабатываем все платежи (тестовые и реальные)
+    if data.get('notification_type') in ['card-incoming', 'p2p-incoming']:
+        logging.info("🔧 Обрабатываем платеж - начисляем баланс")
+        
+        # Определяем пользователя из label или используем админа для тестов
+        user_id = 476589798  # По умолчанию админ
+        if 'label' in data and data['label']:
+            try:
+                # Пытаемся извлечь user_id из label (формат: user_123456789)
+                if data['label'].startswith('user_'):
+                    user_id = int(data['label'].replace('user_', ''))
+            except:
+                pass
+        
+        # Определяем количество публикаций по сумме с учетом комиссии YooMoney
+        amount = float(data.get('amount', '0'))
+        withdraw_amount = float(data.get('withdraw_amount', amount))
+        
+        # Используем withdraw_amount (сумма без комиссии) для определения тарифа
+        # Комиссия YooMoney: 0% - 8%, поэтому расширяем диапазоны
+        if 46 <= withdraw_amount <= 54:  # Тариф 50₽ (комиссия до 8%)
+            publications = 1
+        elif 184 <= withdraw_amount <= 216:  # Тариф 200₽ (комиссия до 8%)
+            publications = 4
+        elif 322 <= withdraw_amount <= 378:  # Тариф 350₽ (комиссия до 8%)
+            publications = 7
+        elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
+            publications = 12
+        else:
+            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
+            publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
+        
+        if publications > 0:
+            try:
+                import sqlite3
+                with sqlite3.connect(DATABASE_PATH) as db_conn:
+                    cursor = db_conn.cursor()
+                    
+                    # Создаем таблицы если их нет
+                    cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
+                    cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                    db_conn.commit()
+                    
+                    # Создаем пользователя если его нет
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                        (user_id, None, None, 0, False)
+                    )
+                    
+                    # Начисляем публикации
+                    cursor.execute(
+                        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                        (publications, user_id)
+                    )
+                    
+                    # Записываем транзакцию - показываем сумму, которую заплатил клиент
+                    operation_id = data.get('operation_id', 'unknown')
+                    description = f"Пополнение: {amount}₽ → {publications} публикаций"
+                    if data.get('test_notification') == 'true':
+                        description = f"Тестовое пополнение: {amount}₽ → {publications} публикаций"
+                    
+                    cursor.execute(
+                        "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                        (user_id, publications, "yoomoney_payment", description)
+                    )
+                    
+                    db_conn.commit()
+                
+                logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {amount}₽")
+                
+                # Отправляем уведомление через простую HTTP систему
+                try:
+                    import requests
+                    
+                    # Получаем новый баланс
+                    with sqlite3.connect(DATABASE_PATH) as db_conn:
+                        cursor = db_conn.cursor()
+                        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+                        new_balance = cursor.fetchone()[0]
+                    
+                    # URL для отправки сообщения через Telegram Bot API
+                    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                    
+                    # Текст уведомления - показываем только сумму, которую заплатил клиент
+                    text = f"💰 <b>Баланс пополнен!</b>\n\n"
+                    text += f"💳 Сумма: {amount}₽\n"
+                    text += f"📝 Публикаций: +{publications}\n"
+                    text += f"💎 Новый баланс: {new_balance} публикаций"
+                    
+                    # Данные для отправки
+                    data = {
+                        'chat_id': user_id,
+                        'text': text,
+                        'parse_mode': 'HTML'
+                    }
+                    
+                    # Отправляем запрос
+                    response = requests.post(url, data=data, timeout=10)
+                    
+                    if response.status_code == 200:
+                        logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                    else:
+                        logging.error(f"❌ Ошибка отправки уведомления: {response.status_code} - {response.text}")
+                    
+                except Exception as e:
+                    logging.error(f"❌ Ошибка отправки уведомления: {e}")
+                
+            except Exception as e:
+                logging.error(f"❌ Ошибка обновления баланса: {e}")
+        else:
+            logging.warning(f"⚠️ Сумма {withdraw_amount}₽ слишком мала для начисления публикаций")
+    
+    # Возвращаем OK
     return "OK"
 
 @app.route('/webhook', methods=['POST', 'GET'])
