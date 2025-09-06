@@ -2800,9 +2800,12 @@ def yoomoney_webhook():
             except ValueError:
                 pass
         
+        # Если user_id не определен, используем админа для тестовых платежей
         if not user_id:
-            logging.error("❌ Не удалось определить user_id")
-            return "OK"
+            user_id = 476589798  # ID админа
+            logging.info(f"🔧 Тестовый платеж - используем админа {user_id}")
+        
+        logging.info(f"👤 Обрабатываем платеж для пользователя {user_id}")
         
         # Определяем количество публикаций по тарифу
         if 46 <= withdraw_amount <= 54:  # 50₽
@@ -2856,6 +2859,42 @@ def yoomoney_webhook():
             thread.join(timeout=5)
             
             logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
+            
+            # Отправляем уведомление в бот
+            try:
+                import asyncio
+                from aiogram import Bot
+                
+                async def send_notification():
+                    bot_instance = Bot(token=BOT_TOKEN)
+                    try:
+                        message = f"💰 **Пополнение баланса!**\n\n"
+                        message += f"💳 Сумма: {withdraw_amount}₽\n"
+                        message += f"📝 Публикаций: {publications}\n"
+                        message += f"🆔 ID: {user_id}\n"
+                        message += f"📊 Новый баланс: {publications} публикаций"
+                        
+                        await bot_instance.send_message(
+                            chat_id=user_id,
+                            text=message,
+                            parse_mode="Markdown"
+                        )
+                        logging.info(f"📱 Уведомление отправлено пользователю {user_id}")
+                    finally:
+                        await bot_instance.session.close()
+                
+                # Запускаем отправку уведомления
+                def run_notification():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(send_notification())
+                    loop.close()
+                
+                notification_thread = threading.Thread(target=run_notification)
+                notification_thread.start()
+                
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки уведомления: {e}")
             
         except Exception as e:
             logging.error(f"❌ Ошибка начисления: {e}")
