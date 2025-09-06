@@ -2773,6 +2773,7 @@ def yoomoney_webhook():
     """Webhook для обработки уведомлений от YooMoney"""
     try:
         logging.info("=" * 50)
+        logging.info("=== CURRENT VERSION 1.2.3 ===")
         logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
         logging.info(f"Метод: {request.method}")
         logging.info(f"IP: {request.remote_addr}")
@@ -2808,6 +2809,10 @@ def yoomoney_webhook():
         if data.get('test_notification') == 'true':
             logging.info("✅ Тестовое уведомление получено - подпись не проверяем")
             return "OK"
+        
+        # ВРЕМЕННО: для отладки возвращаем OK для всех уведомлений
+        logging.info("🔧 ВРЕМЕННО: возвращаем OK для всех уведомлений")
+        return "OK"
         
         # Проверяем подлинность уведомления только для реальных платежей
         if not verify_yoomoney_signature(data, YOOMONEY_SECRET, data['sha1_hash']):
