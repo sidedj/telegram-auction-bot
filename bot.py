@@ -631,39 +631,38 @@ async def handle_payment_check(callback: types.CallbackQuery):
         if has_recent_payment:
             # Платеж был обработан - показываем успешное сообщение
             await callback.answer(
-                f"✅ <b>Платеж прошел!</b>\n\n"
+                f"✅ <b>Размещение оплачено!</b>\n\n"
                 f"💰 Ваш текущий баланс: {user['balance']} публикаций\n\n"
                 f"Публикации успешно начислены на ваш счет.",
                 show_alert=True
             )
             
-            # Обновляем кнопку на "Платеж прошел"
+            # Обновляем кнопку на "Размещение оплачено"
             try:
                 await callback.message.edit_reply_markup(
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text=f"💳 Оплатить {PAYMENT_PLANS[plan_id]['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={PAYMENT_PLANS[plan_id]['description']}&sum={PAYMENT_PLANS[plan_id]['price']}&label=user_{user_id}")],
-                        [InlineKeyboardButton(text="✅ Платеж прошел", callback_data=f"payment_success_{plan_id}")]
+                        [InlineKeyboardButton(text="✅ Размещение оплачено", callback_data=f"payment_success_{plan_id}")]
                     ])
                 )
             except Exception as e:
                 logging.warning(f"Не удалось обновить кнопку: {e}")
         else:
-            # Платеж еще не обработан - предлагаем принудительное начисление
+            # Платеж еще не обработан - показываем статус ожидания
             await callback.answer(
                 f"💰 Ваш текущий баланс: {user['balance']} публикаций\n\n"
-                f"💡 Подсказка:\n"
-                f"Публикации начисляются автоматически после подтверждения оплаты ЮMoney.\n"
-                f"Если прошло более 5 минут, нажмите 'Принудительно начислить'.",
+                f"⏳ <b>Ожидание оплаты...</b>\n\n"
+                f"💡 Публикации начисляются автоматически после подтверждения оплаты ЮMoney.\n"
+                f"Обычно это занимает 1-3 минуты.",
                 show_alert=True
             )
             
-            # Обновляем клавиатуру с кнопкой принудительного начисления
+            # Обновляем клавиатуру без кнопки принудительного начисления
             try:
                 await callback.message.edit_reply_markup(
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text=f"💳 Оплатить {PAYMENT_PLANS[plan_id]['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={PAYMENT_PLANS[plan_id]['description']}&sum={PAYMENT_PLANS[plan_id]['price']}&label=user_{user_id}")],
-                        [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"check_payment_{plan_id}")],
-                        [InlineKeyboardButton(text="⚡ Принудительно начислить", callback_data=f"force_payment_{plan_id}")]
+                        [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"check_payment_{plan_id}")]
                     ])
                 )
             except Exception as e:
@@ -678,63 +677,6 @@ async def handle_payment_success(callback: types.CallbackQuery):
     """Обработчик кнопки 'Платеж прошел'"""
     await callback.answer("✅ Платеж уже обработан!", show_alert=True)
 
-@dp.callback_query(F.data.startswith("force_payment_"))
-async def handle_force_payment(callback: types.CallbackQuery):
-    """Обработчик принудительного начисления платежа"""
-    try:
-        plan_id = callback.data.replace("force_payment_", "")
-        user_id = callback.from_user.id
-        user = await db.get_or_create_user(user_id)
-        
-        if not user:
-            await callback.answer("Ошибка получения данных пользователя.", show_alert=True)
-            return
-        
-        # Проверяем, что пользователь не администратор
-        if user['is_admin']:
-            await callback.answer("У вас неограниченный баланс как у администратора.", show_alert=True)
-            return
-        
-        # Получаем план
-        if plan_id not in PAYMENT_PLANS:
-            await callback.answer("Неверный план платежа.", show_alert=True)
-            return
-        
-        plan = PAYMENT_PLANS[plan_id]
-        publications = int(plan_id)  # Количество публикаций = ID плана
-        
-        # Начисляем публикации
-        current_balance = user['balance']
-        new_balance = current_balance + publications
-        
-        # Обновляем баланс
-        await db.update_user_balance(user_id, new_balance)
-        
-        # Добавляем транзакцию
-        await db.add_transaction(user_id, publications, 'force_payment', f'Принудительное начисление: {publications} публикаций за {plan["price"]}₽')
-        
-        # Обновляем клавиатуру
-        try:
-            await callback.message.edit_reply_markup(
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={plan['description']}&sum={plan['price']}&label=user_{user_id}")],
-                    [InlineKeyboardButton(text="✅ Платеж прошел", callback_data=f"payment_success_{plan_id}")]
-                ])
-            )
-        except Exception as e:
-            logging.error(f"Error updating keyboard: {e}")
-        
-        await callback.answer(
-            f"✅ <b>Публикации начислены!</b>\n\n"
-            f"💰 Было: {current_balance} публикаций\n"
-            f"💰 Стало: {new_balance} публикаций\n"
-            f"➕ Добавлено: {publications} публикаций",
-            show_alert=True
-        )
-        
-    except Exception as e:
-        logging.error(f"Error in force payment: {e}")
-        await callback.answer("Ошибка при начислении публикаций. Попробуйте позже.", show_alert=True)
 
 @dp.pre_checkout_query()
 async def pre_checkout_query(pre_checkout_q: PreCheckoutQuery):
