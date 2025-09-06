@@ -497,6 +497,11 @@ class Database:
 
     async def get_user_balance(self, user_id: int) -> int:
         """Получить баланс пользователя"""
+        # Проверяем, является ли пользователь админом
+        user = await self.get_or_create_user(user_id)
+        if user['is_admin']:
+            return 999999  # Неограниченный баланс для админов
+        
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 "SELECT balance FROM users WHERE user_id = ?",

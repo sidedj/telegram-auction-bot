@@ -396,6 +396,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # Обновлено: 05.09.2025 - полностью убрана логика бонусов
 
     balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
+    
+    # Для админов устанавливаем неограниченный баланс в базе данных
+    if user['is_admin']:
+        await db.update_user_balance(user_id, 999999, 'admin_unlimited', 'Неограниченный баланс администратора')
 
     # Создаем меню с учетом баланса пользователя
     dynamic_menu = get_main_menu(user['balance'], user['is_admin'])
