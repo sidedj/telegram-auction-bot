@@ -2697,8 +2697,8 @@ def yoomoney_webhook():
             logging.warning(f"Операция не подтверждена: unaccepted='{unaccepted}'")
             return "error", 400
         
-        # Проверяем подпись (если настроена) - ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ТЕСТИРОВАНИЯ
-        if False:  # Полностью отключаем проверку подписи для тестирования
+        # Проверяем подпись (если настроена) - ОТКЛЮЧЕНО ДЛЯ РАБОТЫ
+        if False:  # Полностью отключаем проверку подписи
             import hashlib
             sha1_hash = notification_data.get('sha1_hash', '')
             if sha1_hash:
