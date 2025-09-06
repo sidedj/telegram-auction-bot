@@ -2815,7 +2815,7 @@ def yoomoney_webhook():
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
     """Новый webhook - сразу начисляет публикации"""
-    logging.info("=== WEBHOOK VERSION 12.0 - НОВЫЙ ENDPOINT ===")
+    logging.info("=== WEBHOOK VERSION 13.0 - С УВЕДОМЛЕНИЯМИ ===")
     
     if request.method == 'GET':
         return "OK"
@@ -2862,6 +2862,31 @@ def webhook_new():
                 db_conn.commit()
             
             logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id}")
+            
+            # Отправляем уведомление
+            try:
+                import asyncio
+                from notifications import send_balance_notification
+                
+                # Получаем новый баланс
+                cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+                new_balance = cursor.fetchone()[0]
+                
+                # Отправляем уведомление асинхронно
+                async def send_notification():
+                    await send_balance_notification(
+                        user_id=user_id,
+                        amount=0,  # Рубли
+                        publications=publications,
+                        new_balance=new_balance
+                    )
+                
+                # Запускаем асинхронную функцию
+                asyncio.run(send_notification())
+                logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки уведомления: {e}")
             
         except Exception as e:
             logging.error(f"❌ Ошибка обновления баланса: {e}")
