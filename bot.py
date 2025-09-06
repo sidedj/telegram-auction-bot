@@ -261,13 +261,13 @@ async def process_payment(data):
         
         # Определяем количество публикаций по тарифу (сумма до комиссии)
         # amount уже содержит withdraw_amount (сумму без комиссии)
-        if amount == 50:
+        if 45 <= amount <= 55:  # Тариф 50₽ (с учетом комиссии)
             publications = 1
-        elif amount == 200:
+        elif 190 <= amount <= 210:  # Тариф 200₽ (с учетом комиссии)
             publications = 5
-        elif amount == 350:
+        elif 340 <= amount <= 360:  # Тариф 350₽ (с учетом комиссии)
             publications = 10
-        elif amount == 600:
+        elif 580 <= amount <= 620:  # Тариф 600₽ (с учетом комиссии)
             publications = 20
         else:
             # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
