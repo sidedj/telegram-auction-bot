@@ -2822,42 +2822,31 @@ def yoomoney_webhook():
         
         # Начисляем публикации
         try:
-            import aiosqlite
-            import asyncio
+            import sqlite3
             
-            async def add_publications():
-                async with aiosqlite.connect(DATABASE_PATH) as db_conn:
-                    # Создаем пользователя
-                    await db_conn.execute(
-                        "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
-                        (user_id, None, None, 0, False)
-                    )
-                    
-                    # Начисляем публикации
-                    await db_conn.execute(
-                        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                        (publications, user_id)
-                    )
-                    
-                    # Записываем транзакцию
-                    await db_conn.execute(
-                        "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                        (user_id, publications, "yoomoney_payment", f"Пополнение: {withdraw_amount}₽ → {publications} публикаций")
-                    )
-                    
-                    await db_conn.commit()
-            
-            # Запускаем в новом потоке
-            import threading
-            def run_async():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(add_publications())
-                loop.close()
-            
-            thread = threading.Thread(target=run_async)
-            thread.start()
-            thread.join(timeout=5)
+            # Синхронная работа с базой данных
+            with sqlite3.connect(DATABASE_PATH) as db_conn:
+                cursor = db_conn.cursor()
+                
+                # Создаем пользователя
+                cursor.execute(
+                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, None, None, 0, False)
+                )
+                
+                # Начисляем публикации
+                cursor.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (publications, user_id)
+                )
+                
+                # Записываем транзакцию
+                cursor.execute(
+                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                    (user_id, publications, "yoomoney_payment", f"Пополнение: {withdraw_amount}₽ → {publications} публикаций")
+                )
+                
+                db_conn.commit()
             
             logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
             
