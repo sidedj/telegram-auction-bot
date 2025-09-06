@@ -2883,11 +2883,11 @@ def webhook_new():
                         (publications, user_id)
                     )
                     
-                    # Записываем транзакцию
+                    # Записываем транзакцию - показываем сумму, которую заплатил клиент
                     operation_id = data.get('operation_id', 'unknown')
-                    description = f"Пополнение: {withdraw_amount}₽ → {publications} публикаций"
+                    description = f"Пополнение: {amount}₽ → {publications} публикаций"
                     if data.get('test_notification') == 'true':
-                        description = f"Тестовое пополнение: {withdraw_amount}₽ → {publications} публикаций"
+                        description = f"Тестовое пополнение: {amount}₽ → {publications} публикаций"
                     
                     cursor.execute(
                         "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
@@ -2896,7 +2896,7 @@ def webhook_new():
                     
                     db_conn.commit()
                 
-                logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
+                logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {amount}₽")
                 
                 # Отправляем уведомление через простую HTTP систему
                 try:
@@ -2911,13 +2911,9 @@ def webhook_new():
                     # URL для отправки сообщения через Telegram Bot API
                     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
                     
-                    # Текст уведомления
+                    # Текст уведомления - показываем только сумму, которую заплатил клиент
                     text = f"💰 <b>Баланс пополнен!</b>\n\n"
-                    if amount != withdraw_amount:
-                        text += f"💳 Сумма: {amount}₽ (комиссия: {amount - withdraw_amount:.2f}₽)\n"
-                        text += f"💰 К зачислению: {withdraw_amount}₽\n"
-                    else:
-                        text += f"💳 Сумма: {withdraw_amount}₽\n"
+                    text += f"💳 Сумма: {amount}₽\n"
                     text += f"📝 Публикаций: +{publications}\n"
                     text += f"💎 Новый баланс: {new_balance} публикаций"
                     
