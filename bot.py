@@ -2694,11 +2694,16 @@ def test_endpoint():
 def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
     try:
-        logging.info("Получено уведомление от ЮMoney")
+        logging.info("=" * 50)
+        logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
+        logging.info(f"Метод: {request.method}")
+        logging.info(f"URL: {request.url}")
+        logging.info(f"IP адрес: {request.remote_addr}")
+        logging.info(f"User-Agent: {request.headers.get('User-Agent', 'Не указан')}")
         logging.info(f"Заголовки: {dict(request.headers)}")
         logging.info(f"Данные формы: {request.form.to_dict()}")
-        logging.info(f"Метод: {request.method}")
-        logging.info(f"IP адрес: {request.remote_addr}")
+        logging.info(f"JSON данные: {request.get_json()}")
+        logging.info("=" * 50)
         
         # Если это GET запрос, возвращаем статус
         if request.method == 'GET':
