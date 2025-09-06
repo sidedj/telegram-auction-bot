@@ -478,37 +478,53 @@ async def check_admin_command(message: types.Message):
 @dp.message(Command("add_balance"))
 async def add_balance_command(message: types.Message):
     """Команда для принудительного начисления баланса (только для админов)"""
-    user_id = message.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await message.answer("❌ У вас нет прав администратора.")
-        return
-    
-    # Парсим команду: /add_balance <user_id> <amount>
     try:
+        user_id = message.from_user.id
+        logging.info(f"🔍 Команда /add_balance от пользователя {user_id}")
+        
+        user = await db.get_or_create_user(user_id)
+        logging.info(f"🔍 Пользователь получен: {user}")
+        
+        if not user['is_admin']:
+            logging.warning(f"❌ Пользователь {user_id} не является администратором")
+            await message.answer("❌ У вас нет прав администратора.")
+            return
+        
+        # Парсим команду: /add_balance <user_id> <amount>
         parts = message.text.split()
+        logging.info(f"🔍 Парсинг команды: {parts}")
+        
         if len(parts) != 3:
             await message.answer("❌ Использование: /add_balance <user_id> <количество_публикаций>")
             return
         
         target_user_id = int(parts[1])
         amount = int(parts[2])
+        logging.info(f"🔍 Целевой пользователь: {target_user_id}, сумма: {amount}")
         
         if amount <= 0:
             await message.answer("❌ Количество публикаций должно быть больше 0.")
             return
         
         # Получаем текущий баланс пользователя
+        logging.info(f"🔍 Получаем информацию о пользователе {target_user_id}")
         target_user = await db.get_or_create_user(target_user_id)
         current_balance = target_user['balance']
         new_balance = current_balance + amount
+        logging.info(f"🔍 Текущий баланс: {current_balance}, новый баланс: {new_balance}")
         
         # Обновляем баланс
-        await db.update_user_balance(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
+        logging.info(f"🔍 Обновляем баланс пользователя {target_user_id}")
+        success = await db.update_user_balance(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
+        logging.info(f"🔍 Результат обновления баланса: {success}")
+        
+        if not success:
+            await message.answer("❌ Ошибка при обновлении баланса в базе данных.")
+            return
         
         # Отправляем уведомление пользователю
         try:
+            logging.info(f"🔍 Отправляем уведомление пользователю {target_user_id}")
             await bot.send_message(
                 target_user_id,
                 f"✅ <b>Ваш баланс пополнен!</b>\n\n"
@@ -530,12 +546,14 @@ async def add_balance_command(message: types.Message):
             f"📱 Уведомление отправлено пользователю",
             parse_mode="HTML"
         )
+        logging.info(f"✅ Команда /add_balance выполнена успешно")
         
-    except ValueError:
+    except ValueError as e:
+        logging.error(f"❌ ValueError в add_balance: {e}")
         await message.answer("❌ Неверный формат команды. Используйте: /add_balance <user_id> <количество>")
     except Exception as e:
-        logging.error(f"Error adding balance: {e}")
-        await message.answer("❌ Ошибка при начислении баланса.")
+        logging.error(f"❌ Общая ошибка в add_balance: {e}")
+        await message.answer(f"❌ Ошибка при начислении баланса: {str(e)}")
 
 @dp.message(Command("sync_payments"))
 async def sync_payments_command(message: types.Message):
