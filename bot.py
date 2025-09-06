@@ -2894,8 +2894,42 @@ def webhook_new():
                 
                 logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
                 
-                # Пока отключаем уведомления для отладки
-                logging.info(f"💡 Уведомления временно отключены для отладки")
+                # Отправляем уведомление через простую HTTP систему
+                try:
+                    import requests
+                    
+                    # Получаем новый баланс
+                    with sqlite3.connect(DATABASE_PATH) as db_conn:
+                        cursor = db_conn.cursor()
+                        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+                        new_balance = cursor.fetchone()[0]
+                    
+                    # URL для отправки сообщения через Telegram Bot API
+                    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                    
+                    # Текст уведомления
+                    text = f"💰 <b>Баланс пополнен!</b>\n\n"
+                    text += f"💳 Сумма: {withdraw_amount}₽\n"
+                    text += f"📝 Публикаций: +{publications}\n"
+                    text += f"💎 Новый баланс: {new_balance} публикаций"
+                    
+                    # Данные для отправки
+                    data = {
+                        'chat_id': user_id,
+                        'text': text,
+                        'parse_mode': 'HTML'
+                    }
+                    
+                    # Отправляем запрос
+                    response = requests.post(url, data=data, timeout=10)
+                    
+                    if response.status_code == 200:
+                        logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                    else:
+                        logging.error(f"❌ Ошибка отправки уведомления: {response.status_code} - {response.text}")
+                    
+                except Exception as e:
+                    logging.error(f"❌ Ошибка отправки уведомления: {e}")
                 
             except Exception as e:
                 logging.error(f"❌ Ошибка обновления баланса: {e}")
