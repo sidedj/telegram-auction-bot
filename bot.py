@@ -253,13 +253,14 @@ async def process_payment(data):
     try:
         operation_id = data.get('operation_id')
         
-        # Используем withdraw_amount (сумма без комиссии) если есть, иначе amount
+        # Используем withdraw_amount (сумма без комиссии) для определения количества публикаций
         if 'withdraw_amount' in data and data['withdraw_amount']:
             amount = float(data['withdraw_amount'])
         else:
             amount = float(data.get('amount', 0))
         
         # Конвертируем рубли в публикации (1 рубль = 1 публикация)
+        # Пользователь платит 50 руб за 1 публикацию, независимо от комиссии
         publications = int(amount)
         
         # Получаем user_id из label
@@ -290,12 +291,12 @@ async def process_payment(data):
                 (operation_id,)
             )
             if await cursor.fetchone():
-                logging.warning(f"Платеж {operation_id} уже обработан")
-                return True
+                logging.warning(f"Платеж {operation_id} уже обработан, но обрабатываем заново для уведомления")
+                # Не возвращаем True, продолжаем обработку для отправки уведомления
             
-            # Записываем платеж
+            # Записываем платеж (если еще не записан)
             await db_conn.execute(
-                "INSERT INTO processed_payments (operation_id, user_id, amount, publications) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO processed_payments (operation_id, user_id, amount, publications) VALUES (?, ?, ?, ?)",
                 (operation_id, user_id, amount, publications)
             )
             
