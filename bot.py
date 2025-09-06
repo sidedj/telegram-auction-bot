@@ -2810,19 +2810,14 @@ def health():
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Простой webhook - сразу начисляет публикации"""
-    logging.info("=== WEBHOOK VERSION 9.0 - ДИАГНОСТИКА ===")
-    logging.info(f"Method: {request.method}")
-    logging.info(f"Headers: {dict(request.headers)}")
-    logging.info(f"Raw body: {request.data}")
-    logging.info(f"Form data: {request.form}")
-    logging.info(f"JSON data: {request.get_json()}")
+    logging.info("=== WEBHOOK VERSION 10.0 - ИСПРАВЛЕННАЯ ВЕРСИЯ ===")
     
     if request.method == 'GET':
         return "OK"
     
-    # Получаем данные
+    # Получаем данные из формы
     data = request.form.to_dict()
-    logging.info(f"Parsed data: {data}")
+    logging.info(f"📥 Получен платеж: {data}")
     
     # Простая обработка для тестовых уведомлений
     if data.get('test_notification') == 'true':
@@ -2866,7 +2861,8 @@ def yoomoney_webhook():
         except Exception as e:
             logging.error(f"❌ Ошибка обновления баланса: {e}")
     
-    return "OK"
+    # Возвращаем OK с правильным статусом
+    return "OK", 200
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
