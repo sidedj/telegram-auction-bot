@@ -2804,7 +2804,12 @@ def yoomoney_webhook():
         if 'label' not in data:
             data['label'] = ''
         
-        # Проверяем подлинность уведомления
+        # Проверяем, что это не тестовое уведомление
+        if data.get('test_notification') == 'true':
+            logging.info("✅ Тестовое уведомление получено - подпись не проверяем")
+            return "OK"
+        
+        # Проверяем подлинность уведомления только для реальных платежей
         if not verify_yoomoney_signature(data, YOOMONEY_SECRET, data['sha1_hash']):
             logging.error("❌ Неверная подпись уведомления!")
             return "error", 400
@@ -2814,11 +2819,6 @@ def yoomoney_webhook():
         # Обрабатываем все входящие платежи
         if 'incoming' not in data['notification_type']:
             logging.info(f"Пропускаем уведомление типа: {data['notification_type']}")
-            return "OK"
-        
-        # Проверяем, что это не тестовое уведомление
-        if data.get('test_notification') == 'true':
-            logging.info("✅ Тестовое уведомление получено и проверено")
             return "OK"
         
         # Обрабатываем реальный платеж
