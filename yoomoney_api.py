@@ -97,11 +97,25 @@ class PaymentProcessor:
         """
         try:
             operation_id = data.get('operation_id')
-            amount = float(data.get('amount', 0))
-            sender = data.get('sender', '')
             
-            # Конвертируем рубли в публикации (1 рубль = 1 публикация)
-            publications = int(amount)
+            # Используем withdraw_amount (сумма без комиссии) для определения тарифа
+            if 'withdraw_amount' in data and data['withdraw_amount']:
+                amount = float(data['withdraw_amount'])
+            else:
+                amount = float(data.get('amount', 0))
+            
+            # Определяем количество публикаций по тарифу (сумма до комиссии)
+            if amount == 50:
+                publications = 1
+            elif amount == 200:
+                publications = 5
+            elif amount == 350:
+                publications = 10
+            elif amount == 600:
+                publications = 20
+            else:
+                # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
+                publications = int(amount)
             
             # Получаем user_id из label
             user_id = None
