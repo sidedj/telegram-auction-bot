@@ -23,7 +23,7 @@ def load_config():
     # Настройки ЮMoney
     YOOMONEY_RECEIVER = os.getenv("YOOMONEY_RECEIVER", "4100118987681575")
     YOOMONEY_SECRET = os.getenv("YOOMONEY_SECRET", "SaTKEuJWPVXJI/JFpXDCHZ4q")
-    YOOMONEY_NOTIFICATION_URL = os.getenv("YOOMONEY_NOTIFICATION_URL", "https://web-production-fa7dc.up.railway.app/yoomoney")
+    YOOMONEY_NOTIFICATION_URL = os.getenv("YOOMONEY_NOTIFICATION_URL", "https://telegabot-production-3c68.up.railway.app/yoomoney")
     
     # Тарифы для оплаты
     PAYMENT_PLANS = {
@@ -75,6 +75,9 @@ def load_config():
     PERSISTENCE_FILE = os.getenv("PERSISTENCE_FILE", "auction_state.json")
     PERSISTENCE_INTERVAL = int(os.getenv("PERSISTENCE_INTERVAL", "300"))
     
+    # Отключение проверки подписки (для тестирования)
+    DISABLE_SUBSCRIPTION_CHECK = os.getenv("DISABLE_SUBSCRIPTION_CHECK", "true").lower() == "true"
+    
     return {
         "BOT_TOKEN": BOT_TOKEN,
         "PAYMENTS_PROVIDER_TOKEN": PAYMENTS_PROVIDER_TOKEN,
@@ -95,7 +98,8 @@ def load_config():
         "LOG_LEVEL": LOG_LEVEL,
         "LOG_FILE": LOG_FILE,
         "PERSISTENCE_FILE": PERSISTENCE_FILE,
-        "PERSISTENCE_INTERVAL": PERSISTENCE_INTERVAL
+        "PERSISTENCE_INTERVAL": PERSISTENCE_INTERVAL,
+        "DISABLE_SUBSCRIPTION_CHECK": DISABLE_SUBSCRIPTION_CHECK
     }
 
 # Загружаем конфигурацию
@@ -122,3 +126,4 @@ LOG_LEVEL = config["LOG_LEVEL"]
 LOG_FILE = config["LOG_FILE"]
 PERSISTENCE_FILE = config["PERSISTENCE_FILE"]
 PERSISTENCE_INTERVAL = config["PERSISTENCE_INTERVAL"]
+DISABLE_SUBSCRIPTION_CHECK = config["DISABLE_SUBSCRIPTION_CHECK"]

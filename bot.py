@@ -3,11 +3,10 @@
 import asyncio
 import logging
 import os
-import queue
 from datetime import datetime, timedelta
 import re
 import threading
-from flask import Flask, request, jsonify
+from quart import Quart, request, jsonify
 import sqlite3
 
 from aiogram import Bot, Dispatcher, F, types
@@ -27,12 +26,12 @@ from aiogram.types import (
 )
 
 # Импорты наших модулей
-from config import load_config
-from database import Database
+from config import load_config, DISABLE_SUBSCRIPTION_CHECK
+from database_postgres import Database
 from auction_timer import AuctionTimer
 from balance_manager import BalanceManager
 from auction_persistence import AuctionPersistence
-from admin_panel import AdminPanel
+# from admin_panel import AdminPanel  # Не используется
 # from api_integration import api_integration  # Отключено
 # from yoomoney_payment import YooMoneyPayment  # Отключено
 # from payment_server import get_notification_queue  # Отключено
@@ -94,7 +93,7 @@ ADMIN_USER_IDS = config['ADMIN_USER_IDS']
 DATABASE_PATH = config['DATABASE_PATH']
 
 # Инициализация базы данных
-db = Database(DATABASE_PATH)
+db = Database()  # Использует DATABASE_URL из переменных окружения
 
 # Инициализация менеджера балансов
 balance_manager = BalanceManager(DATABASE_PATH)
@@ -120,19 +119,8 @@ def get_main_menu(user_balance=None, is_admin=False):
         input_field_placeholder="Нажмите /start для начала работы"
     )
 
-# Статичное главное меню для случаев, когда баланс неизвестен
-main_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Создать аукцион 🚀")],
-        [
-            KeyboardButton(text="Мои аукционы 📦"),
-            KeyboardButton(text="Пополнить баланс 💳")
-        ],
-        [KeyboardButton(text="📊 Статистика")]
-    ],
-    resize_keyboard=True,
-    input_field_placeholder="Нажмите /start для начала работы"
-)
+# Статичное главное меню для случаев, когда баланс неизвестен (используется как fallback)
+main_menu = get_main_menu()
 
 # Inline-кнопки для выбора длительности аукциона
 def get_duration_keyboard():
@@ -190,13 +178,20 @@ except Exception:
 async def check_user_subscription(user_id: int) -> bool:
     """Проверяет, подписан ли пользователь на канал"""
     try:
+        # Если проверка подписки отключена, всегда возвращаем True
+        if DISABLE_SUBSCRIPTION_CHECK:
+            logging.info(f"Subscription check disabled, user {user_id} considered subscribed")
+            return True
+            
         # Получаем информацию о статусе подписки пользователя
         chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
         
         # Проверяем статус подписки
         # member, administrator, creator - активные подписчики
         # left, kicked - не подписан
-        return chat_member.status in ['member', 'administrator', 'creator']
+        is_subscribed = chat_member.status in ['member', 'administrator', 'creator']
+        logging.info(f"User {user_id} subscription check: status={chat_member.status}, subscribed={is_subscribed}")
+        return is_subscribed
     except Exception as e:
         logging.error(f"Error checking subscription for user {user_id}: {e}")
         # В случае ошибки считаем, что пользователь не подписан
@@ -278,6 +273,179 @@ async def cmd_start(message: types.Message, state: FSMContext):
         reply_markup=dynamic_menu,
         parse_mode="HTML"
     )
+
+
+# --- Команда проверки статуса платежей ---
+@dp.message(Command("update_admin"))
+async def update_admin_command(message: types.Message):
+    """Команда для обновления админских прав"""
+    user_id = message.from_user.id
+    
+    # Проверяем, что пользователь есть в списке админов
+    if user_id not in ADMIN_USER_IDS:
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Принудительно выдаем админские права
+        success = await db.grant_admin_status(user_id)
+        
+        if success:
+            await message.answer(
+                "✅ Админские права успешно обновлены!\n"
+                "Перезапустите бота командой /start для применения изменений."
+            )
+        else:
+            await message.answer("❌ Ошибка при обновлении админских прав.")
+            
+    except Exception as e:
+        logging.error(f"Error updating admin status: {e}")
+        await message.answer("❌ Ошибка при обновлении админских прав.")
+
+@dp.message(Command("check_admin"))
+async def check_admin_command(message: types.Message):
+    """Команда для проверки админского статуса"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    is_admin_in_config = user_id in ADMIN_USER_IDS
+    is_admin_in_db = user['is_admin']
+    
+    status_text = f"🔍 <b>Проверка админского статуса</b>\n\n"
+    status_text += f"👤 Ваш ID: {user_id}\n"
+    status_text += f"⚙️ В конфигурации: {'✅ Да' if is_admin_in_config else '❌ Нет'}\n"
+    status_text += f"💾 В базе данных: {'✅ Да' if is_admin_in_db else '❌ Нет'}\n"
+    status_text += f"📋 Список админов: {list(ADMIN_USER_IDS)}\n\n"
+    
+    if is_admin_in_config and is_admin_in_db:
+        status_text += "🎉 <b>У вас есть админские права!</b>"
+    elif is_admin_in_config and not is_admin_in_db:
+        status_text += "⚠️ <b>Вы в списке админов, но права не применены.</b>\n"
+        status_text += "Используйте команду /update_admin для обновления."
+    else:
+        status_text += "❌ <b>У вас нет админских прав.</b>"
+    
+    await message.answer(status_text, parse_mode="HTML")
+
+@dp.message(Command("add_balance"))
+async def add_balance_command(message: types.Message):
+    """Команда для принудительного начисления баланса (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    # Парсим команду: /add_balance <user_id> <amount>
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            await message.answer("❌ Использование: /add_balance <user_id> <количество_публикаций>")
+            return
+        
+        target_user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        if amount <= 0:
+            await message.answer("❌ Количество публикаций должно быть больше 0.")
+            return
+        
+        # Получаем текущий баланс пользователя
+        target_user = await db.get_or_create_user(target_user_id)
+        current_balance = target_user['balance']
+        new_balance = current_balance + amount
+        
+        # Обновляем баланс
+        await db.update_user_balance(target_user_id, new_balance)
+        
+        # Добавляем транзакцию
+        await db.add_transaction(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
+        
+        await message.answer(
+            f"✅ <b>Баланс обновлен!</b>\n\n"
+            f"👤 Пользователь: {target_user_id}\n"
+            f"💰 Было: {current_balance} публикаций\n"
+            f"💰 Стало: {new_balance} публикаций\n"
+            f"➕ Добавлено: {amount} публикаций",
+            parse_mode="HTML"
+        )
+        
+    except ValueError:
+        await message.answer("❌ Неверный формат команды. Используйте: /add_balance <user_id> <количество>")
+    except Exception as e:
+        logging.error(f"Error adding balance: {e}")
+        await message.answer("❌ Ошибка при начислении баланса.")
+
+@dp.message(Command("sync_payments"))
+async def sync_payments_command(message: types.Message):
+    """Команда для синхронизации платежей с Railway (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        # Получаем список недавних платежей из базы данных
+        import sqlite3
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT operation_id, user_id, amount, publications, processed_at 
+                FROM processed_payments 
+                ORDER BY processed_at DESC 
+                LIMIT 10
+            """)
+            payments = cursor.fetchall()
+        
+        if not payments:
+            await message.answer("📋 Нет обработанных платежей в базе данных.")
+            return
+        
+        text = "📋 <b>Последние обработанные платежи:</b>\n\n"
+        for payment in payments:
+            text += f"🔑 Операция: {payment[0]}\n"
+            text += f"👤 Пользователь: {payment[1]}\n"
+            text += f"💰 Сумма: {payment[2]} ₽\n"
+            text += f"📝 Публикаций: {payment[3]}\n"
+            text += f"⏰ Время: {payment[4]}\n\n"
+        
+        await message.answer(text, parse_mode="HTML")
+        
+    except Exception as e:
+        logging.error(f"Error syncing payments: {e}")
+        await message.answer("❌ Ошибка при синхронизации платежей.")
+
+@dp.message(Command("payment_status"))
+async def payment_status_command(message: types.Message):
+    """Команда для проверки статуса платежей"""
+    user_id = message.from_user.id
+    
+    # Получаем информацию о пользователе
+    user = await db.get_or_create_user(user_id)
+    
+    # Получаем последние транзакции
+    transactions = await balance_manager.get_transaction_history(user_id, 5)
+    
+    status_text = f"💳 <b>Статус платежей</b>\n\n"
+    status_text += f"💰 <b>Ваш баланс:</b> {user['balance']} публикаций\n\n"
+    
+    if transactions:
+        status_text += f"📊 <b>Последние транзакции:</b>\n"
+        for t in transactions:
+            amount_str = f"+{t['amount']}" if t['amount'] > 0 else str(t['amount'])
+            status_text += f"• {amount_str} - {t['description']}\n"
+            status_text += f"  <i>{t['created_at']}</i>\n\n"
+    else:
+        status_text += f"📊 <b>Транзакций пока нет</b>\n\n"
+    
+    status_text += f"🔗 <b>Webhook URL:</b> {YOOMONEY_NOTIFICATION_URL}\n"
+    status_text += f"🏦 <b>Получатель:</b> {YOOMONEY_RECEIVER}\n\n"
+    status_text += f"💡 <b>Для пополнения баланса используйте команду /top_up</b>"
+    
+    await message.answer(status_text, parse_mode="HTML")
 
 
 # --- Хендлер "Мои аукционы" ---
@@ -480,14 +648,26 @@ async def handle_payment_check(callback: types.CallbackQuery):
             except Exception as e:
                 logging.warning(f"Не удалось обновить кнопку: {e}")
         else:
-            # Платеж еще не обработан
+            # Платеж еще не обработан - предлагаем принудительное начисление
             await callback.answer(
                 f"💰 Ваш текущий баланс: {user['balance']} публикаций\n\n"
                 f"💡 Подсказка:\n"
                 f"Публикации начисляются автоматически после подтверждения оплаты ЮMoney.\n"
-                f"Если прошло более 5 минут, обратитесь к администратору.",
+                f"Если прошло более 5 минут, нажмите 'Принудительно начислить'.",
                 show_alert=True
             )
+            
+            # Обновляем клавиатуру с кнопкой принудительного начисления
+            try:
+                await callback.message.edit_reply_markup(
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=f"💳 Оплатить {PAYMENT_PLANS[plan_id]['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={PAYMENT_PLANS[plan_id]['description']}&sum={PAYMENT_PLANS[plan_id]['price']}&label=user_{user_id}")],
+                        [InlineKeyboardButton(text="🔄 Обновить статус", callback_data=f"check_payment_{plan_id}")],
+                        [InlineKeyboardButton(text="⚡ Принудительно начислить", callback_data=f"force_payment_{plan_id}")]
+                    ])
+                )
+            except Exception as e:
+                logging.error(f"Error updating keyboard: {e}")
         
     except Exception as e:
         logging.error(f"Error checking payment status: {e}")
@@ -497,6 +677,64 @@ async def handle_payment_check(callback: types.CallbackQuery):
 async def handle_payment_success(callback: types.CallbackQuery):
     """Обработчик кнопки 'Платеж прошел'"""
     await callback.answer("✅ Платеж уже обработан!", show_alert=True)
+
+@dp.callback_query(F.data.startswith("force_payment_"))
+async def handle_force_payment(callback: types.CallbackQuery):
+    """Обработчик принудительного начисления платежа"""
+    try:
+        plan_id = callback.data.replace("force_payment_", "")
+        user_id = callback.from_user.id
+        user = await db.get_or_create_user(user_id)
+        
+        if not user:
+            await callback.answer("Ошибка получения данных пользователя.", show_alert=True)
+            return
+        
+        # Проверяем, что пользователь не администратор
+        if user['is_admin']:
+            await callback.answer("У вас неограниченный баланс как у администратора.", show_alert=True)
+            return
+        
+        # Получаем план
+        if plan_id not in PAYMENT_PLANS:
+            await callback.answer("Неверный план платежа.", show_alert=True)
+            return
+        
+        plan = PAYMENT_PLANS[plan_id]
+        publications = int(plan_id)  # Количество публикаций = ID плана
+        
+        # Начисляем публикации
+        current_balance = user['balance']
+        new_balance = current_balance + publications
+        
+        # Обновляем баланс
+        await db.update_user_balance(user_id, new_balance)
+        
+        # Добавляем транзакцию
+        await db.add_transaction(user_id, publications, 'force_payment', f'Принудительное начисление: {publications} публикаций за {plan["price"]}₽')
+        
+        # Обновляем клавиатуру
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_RECEIVER}&quickpay-form=shop&targets={plan['description']}&sum={plan['price']}&label=user_{user_id}")],
+                    [InlineKeyboardButton(text="✅ Платеж прошел", callback_data=f"payment_success_{plan_id}")]
+                ])
+            )
+        except Exception as e:
+            logging.error(f"Error updating keyboard: {e}")
+        
+        await callback.answer(
+            f"✅ <b>Публикации начислены!</b>\n\n"
+            f"💰 Было: {current_balance} публикаций\n"
+            f"💰 Стало: {new_balance} публикаций\n"
+            f"➕ Добавлено: {publications} публикаций",
+            show_alert=True
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in force payment: {e}")
+        await callback.answer("Ошибка при начислении публикаций. Попробуйте позже.", show_alert=True)
 
 @dp.pre_checkout_query()
 async def pre_checkout_query(pre_checkout_q: PreCheckoutQuery):
@@ -1534,7 +1772,8 @@ async def admin_users_callback(callback: types.CallbackQuery):
     
     # Получаем последних 10 пользователей
     try:
-        async with db.db_path as db_conn:
+        import aiosqlite
+        async with aiosqlite.connect(db.db_path) as db_conn:
             cursor = await db_conn.execute(
                 "SELECT user_id, username, full_name, balance, is_admin FROM users ORDER BY created_at DESC LIMIT 10"
             )
@@ -1571,7 +1810,8 @@ async def admin_stats_callback(callback: types.CallbackQuery):
     
     try:
         # Получаем статистику
-        async with db.db_path as db_conn:
+        import aiosqlite
+        async with aiosqlite.connect(db.db_path) as db_conn:
             # Общее количество пользователей
             cursor = await db_conn.execute("SELECT COUNT(*) FROM users")
             total_users = (await cursor.fetchone())[0]
@@ -1638,7 +1878,8 @@ async def admin_auctions_callback(callback: types.CallbackQuery):
     
     try:
         # Получаем активные аукционы (не истекшие по времени)
-        async with db.db_path as db_conn:
+        import aiosqlite
+        async with aiosqlite.connect(db.db_path) as db_conn:
             cursor = await db_conn.execute(
                 "SELECT id, owner_id, description, current_price, end_time FROM auctions WHERE status = 'active' AND end_time > ? ORDER BY created_at DESC LIMIT 5",
                 (datetime.now(),)
@@ -1684,10 +1925,11 @@ async def admin_export_balances_callback(callback: types.CallbackQuery):
         
         if success:
             # Отправляем файл пользователю
+            from aiogram.types import InputFile
             with open("user_balances.txt", "rb") as file:
                 await bot.send_document(
                     chat_id=user_id,
-                    document=file,
+                    document=InputFile(file, filename="user_balances.txt"),
                     caption="📄 <b>Файл с балансами пользователей</b>\n\n"
                            "Файл содержит:\n"
                            "• Список всех пользователей с балансами\n"
@@ -2212,10 +2454,11 @@ async def export_balances_command(message: types.Message):
         
         if success:
             # Отправляем файл пользователю
+            from aiogram.types import InputFile
             with open("user_balances.txt", "rb") as file:
                 await bot.send_document(
                     chat_id=user_id,
-                    document=file,
+                    document=InputFile(file, filename="user_balances.txt"),
                     caption="📄 <b>Файл с балансами пользователей</b>\n\n"
                            "Файл содержит:\n"
                            "• Список всех пользователей с балансами\n"
@@ -2327,51 +2570,38 @@ async def main():
         logging.info("Bot has been stopped.")
 
 # --- Flask webhook сервер для Railway ---
-app = Flask(__name__)
+app = Quart(__name__)
 
-def get_user_balance_webhook(user_id: int) -> int:
+async def get_user_balance_webhook(user_id: int) -> int:
     """Получает баланс пользователя для webhook"""
     try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            return result[0] if result else 0
+        user = await db.get_or_create_user(user_id)
+        return user['balance'] if user else 0
     except Exception as e:
         logging.error(f"Ошибка при получении баланса пользователя {user_id}: {e}")
         return 0
 
-def update_user_balance_webhook(user_id: int, new_balance: int):
+async def update_user_balance_webhook(user_id: int, new_balance: int):
     """Обновляет баланс пользователя для webhook"""
     try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            # Проверяем, есть ли пользователь в базе
-            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-            if cursor.fetchone():
-                # Обновляем существующего пользователя
-                cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-            else:
-                # Создаем нового пользователя
-                cursor.execute("INSERT INTO users (user_id, balance, created_at) VALUES (?, ?, datetime('now'))", (user_id, new_balance))
-            conn.commit()
+        success = await db.update_user_balance(user_id, new_balance)
+        if success:
             logging.info(f"Баланс пользователя {user_id} обновлен: {new_balance}")
+        return success
     except Exception as e:
         logging.error(f"Ошибка при обновлении баланса пользователя {user_id}: {e}")
+        return False
 
-def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
+async def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
     """Добавляет транзакцию в базу данных для webhook"""
     try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                (user_id, amount, transaction_type, description)
-            )
-            conn.commit()
+        success = await db.add_transaction(user_id, amount, transaction_type, description)
+        if success:
             logging.info(f"Транзакция добавлена: пользователь {user_id}, сумма {amount}, тип {transaction_type}, описание {description}")
+        return success
     except Exception as e:
         logging.error(f"Ошибка при добавлении транзакции: {e}")
+        return False
 
 def send_telegram_message_webhook(user_id: int, message: str):
     """Отправляет сообщение пользователю в Telegram для webhook"""
@@ -2391,13 +2621,50 @@ def send_telegram_message_webhook(user_id: int, message: str):
     except Exception as e:
         logging.error(f"Ошибка отправки Telegram сообщения: {e}")
 
+async def is_payment_processed(operation_id: str) -> bool:
+    """Проверяет, был ли уже обработан платеж с данным operation_id"""
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(os.getenv('DATABASE_URL'))
+        try:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM processed_payments WHERE operation_id = $1", operation_id
+            )
+            return row is not None
+        finally:
+            await conn.close()
+    except Exception as e:
+        logging.error(f"Ошибка при проверке обработанных платежей: {e}")
+        return False
+
+async def mark_payment_processed(operation_id: str, user_id: int, amount: float, publications: int):
+    """Отмечает платеж как обработанный"""
+    try:
+        success = await db.mark_payment_processed(operation_id, user_id, amount, publications)
+        if success:
+            logging.info(f"Платеж {operation_id} отмечен как обработанный")
+        return success
+    except Exception as e:
+        logging.error(f"Ошибка при отметке платежа как обработанного: {e}")
+        return False
+
 @app.route('/health')
 def health():
     """Проверка здоровья сервера"""
     return {"status": "ok", "message": "Auction bot is running"}
 
+@app.route('/yoomoney/test', methods=['GET'])
+def yoomoney_test():
+    """Тестовый endpoint для проверки работы webhook"""
+    return {
+        "status": "ok", 
+        "message": "YooMoney webhook is ready",
+        "webhook_url": YOOMONEY_NOTIFICATION_URL,
+        "receiver": YOOMONEY_RECEIVER
+    }
+
 @app.route('/yoomoney', methods=['POST'])
-def yoomoney_webhook():
+async def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
     try:
         logging.info("Получено уведомление от ЮMoney")
@@ -2421,6 +2688,24 @@ def yoomoney_webhook():
             logging.warning("Операция не подтверждена")
             return "error", 400
         
+        # Проверяем подпись (если настроена)
+        if YOOMONEY_SECRET:
+            import hashlib
+            sha1_hash = notification_data.get('sha1_hash', '')
+            if sha1_hash:
+                # Формируем строку для проверки подписи
+                check_string = f"{notification_data.get('notification_type')}&{notification_data.get('operation_id')}&{notification_data.get('amount')}&{notification_data.get('currency')}&{notification_data.get('datetime')}&{notification_data.get('sender')}&{notification_data.get('codepro')}&{YOOMONEY_SECRET}&{notification_data.get('label', '')}"
+                calculated_hash = hashlib.sha1(check_string.encode()).hexdigest()
+                
+                logging.info(f"Проверка подписи: calculated={calculated_hash}, received={sha1_hash}")
+                
+                if calculated_hash != sha1_hash:
+                    logging.warning("Неверная подпись уведомления")
+                    return "error", 400
+            else:
+                logging.warning("Отсутствует подпись в уведомлении")
+                return "error", 400
+        
         # Получаем сумму и ID пользователя
         amount = float(notification_data.get('amount', 0))
         label = notification_data.get('label', '')
@@ -2440,6 +2725,12 @@ def yoomoney_webhook():
             logging.warning(f"Неверный формат ID пользователя в label: {label}")
             return "error", 400
         
+        # Проверяем, не обрабатывали ли мы уже этот платеж
+        operation_id = notification_data.get('operation_id')
+        if await is_payment_processed(operation_id):
+            logging.info(f"Платеж {operation_id} уже был обработан")
+            return "ok", 200
+        
         # Определяем количество публикаций по сумме (учитывая комиссию ЮMoney)
         if amount >= 48.0 and amount <= 52.0:  # 50₽ с комиссией (48.50₽)
             publications = 1
@@ -2458,20 +2749,29 @@ def yoomoney_webhook():
             return "error", 400
         
         # Получаем текущий баланс
-        current_balance = get_user_balance_webhook(user_id)
+        current_balance = await get_user_balance_webhook(user_id)
         new_balance = current_balance + publications
         
         # Обновляем баланс
-        update_user_balance_webhook(user_id, new_balance)
+        await update_user_balance_webhook(user_id, new_balance)
         
         # Записываем транзакцию
-        add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽')
+        await add_transaction_webhook(user_id, publications, 'purchase', f'Покупка {publications} публикаций за {display_amount}₽ (операция {operation_id})')
+        
+        # Отмечаем платеж как обработанный
+        logging.info(f"Marking payment as processed: operation_id={operation_id}, user_id={user_id}, amount={amount}, publications={publications}")
+        success = await mark_payment_processed(operation_id, user_id, amount, publications)
+        if success:
+            logging.info(f"Payment marked as processed successfully")
+        else:
+            logging.error(f"Failed to mark payment as processed")
         
         # Отправляем уведомление пользователю
         message = f"💰 <b>Платеж получен!</b>\n\n"
         message += f"Сумма: {display_amount} ₽\n"
         message += f"Начислено: {publications} публикаций\n"
-        message += f"Ваш баланс: {new_balance} публикаций"
+        message += f"Ваш баланс: {new_balance} публикаций\n\n"
+        message += f"ID операции: {operation_id}"
         
         send_telegram_message_webhook(user_id, message)
         
@@ -2483,25 +2783,27 @@ def yoomoney_webhook():
         logging.error(f"Ошибка при обработке уведомления: {e}")
         return "error", 500
 
-def run_flask_app():
-    """Запуск Flask приложения"""
+async def run_quart_app():
+    """Запуск Quart приложения"""
     port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    await app.run_task(host="0.0.0.0", port=port, debug=False)
 
-def run_bot_with_webhook():
+async def run_bot_with_webhook():
     """Запуск бота с webhook сервером"""
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask_app, daemon=True)
-    flask_thread.start()
+    # Запускаем Quart в отдельной задаче
+    quart_task = asyncio.create_task(run_quart_app())
     
     # Запускаем бота
-    asyncio.run(main())
+    bot_task = asyncio.create_task(main())
+    
+    # Ждем завершения обеих задач
+    await asyncio.gather(quart_task, bot_task)
 
 if __name__ == "__main__":
     # Проверяем, запущен ли на Railway
     if os.getenv("RAILWAY_ENVIRONMENT"):
         # На Railway - запускаем с webhook
-        run_bot_with_webhook()
+        asyncio.run(run_bot_with_webhook())
     else:
         # Локально - обычный polling
         asyncio.run(main())

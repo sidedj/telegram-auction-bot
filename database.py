@@ -507,3 +507,66 @@ class Database:
             count = result[0] if result else 0
             logging.info(f"Проверка недавних платежей для пользователя {user_id}: найдено {count} транзакций за последние {minutes} минут")
             return count > 0
+
+    async def get_total_auctions(self) -> int:
+        """Получить общее количество аукционов"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM auctions")
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+    async def get_active_auctions(self) -> List[Dict]:
+        """Получить все активные аукционы"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM auctions WHERE status = 'active' AND end_time > ?",
+                (datetime.now(),)
+            )
+            auctions = await cursor.fetchall()
+            return [self._format_auction(auction) for auction in auctions]
+
+    async def get_total_users(self) -> int:
+        """Получить общее количество пользователей"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT COUNT(*) FROM users")
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+    async def get_all_users(self) -> List[Dict]:
+        """Получить всех пользователей"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT * FROM users ORDER BY created_at DESC")
+            users = await cursor.fetchall()
+            return [
+                {
+                    'user_id': user[0],
+                    'username': user[1],
+                    'full_name': user[2],
+                    'balance': user[3],
+                    'created_at': user[4],
+                    'is_admin': bool(user[5])
+                }
+                for user in users
+            ]
+
+    def _format_auction(self, auction) -> Dict:
+        """Форматирует аукцион в словарь"""
+        from datetime import datetime
+        end_time = datetime.fromisoformat(auction[6]) if auction[6] else None
+        created_at = datetime.fromisoformat(auction[12]) if auction[12] else None
+        
+        return {
+            'id': auction[0],
+            'owner_id': auction[1],
+            'description': auction[2],
+            'start_price': auction[3],
+            'blitz_price': auction[4],
+            'current_price': auction[5],
+            'current_leader_id': auction[7],
+            'current_leader_username': auction[8],
+            'end_time': end_time,
+            'status': auction[9],
+            'channel_message_id': auction[10],
+            'channel_chat_id': auction[11],
+            'created_at': created_at
+        }
