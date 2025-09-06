@@ -20,4 +20,4 @@ COPY . .
 EXPOSE 8080
 
 # Запуск приложения
-CMD ["python", "yoomoney_webhook.py"]
+CMD ["python", "bot.py"]
