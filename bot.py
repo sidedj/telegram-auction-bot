@@ -797,7 +797,9 @@ async def statistics(message: types.Message):
     expired_count = len([a for a in all_auctions if a['status'] == 'expired'])
     
     text = f"📊 <b>Ваша статистика:</b>\n\n"
-    text += f"💰 <b>Баланс:</b> {user['balance']} публикаций\n"
+    # Для админов показываем неограниченный баланс
+    balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
+    text += f"💰 <b>Баланс:</b> {balance_text}\n"
     text += f"🚀 <b>Всего аукционов:</b> {len(all_auctions)}\n"
     text += f"🟢 <b>Активных:</b> {active_count}\n"
     text += f"✅ <b>Проданных:</b> {sold_count}\n"
@@ -2421,7 +2423,9 @@ async def back_to_stats_callback(callback: types.CallbackQuery):
     expired_count = len([a for a in all_auctions if a['status'] == 'expired'])
     
     text = f"📊 <b>Ваша статистика:</b>\n\n"
-    text += f"💰 <b>Баланс:</b> {user['balance']} публикаций\n"
+    # Для админов показываем неограниченный баланс
+    balance_text = "∞ (администратор)" if user['is_admin'] else f"{user['balance']}"
+    text += f"💰 <b>Баланс:</b> {balance_text}\n"
     text += f"🚀 <b>Всего аукционов:</b> {len(all_auctions)}\n"
     text += f"🟢 <b>Активных:</b> {active_count}\n"
     text += f"✅ <b>Проданных:</b> {sold_count}\n"
