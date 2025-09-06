@@ -259,9 +259,18 @@ async def process_payment(data):
         else:
             amount = float(data.get('amount', 0))
         
-        # Конвертируем рубли в публикации (1 рубль = 1 публикация)
-        # Пользователь платит 50 руб за 1 публикацию, независимо от комиссии
-        publications = int(amount)
+        # Определяем количество публикаций по сумме платежа
+        if amount == 50:
+            publications = 1
+        elif amount == 200:
+            publications = 5
+        elif amount == 350:
+            publications = 10
+        elif amount == 600:
+            publications = 20
+        else:
+            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
+            publications = int(amount)
         
         # Получаем user_id из label
         user_id = None
