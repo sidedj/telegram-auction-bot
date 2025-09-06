@@ -426,11 +426,16 @@ async def sync_payments_command(message: types.Message):
 
 @dp.message(Command("payment_status"))
 async def payment_status_command(message: types.Message):
-    """Команда для проверки статуса платежей"""
+    """Команда для проверки статуса платежей (только для администраторов)"""
     user_id = message.from_user.id
     
     # Получаем информацию о пользователе
     user = await db.get_or_create_user(user_id)
+    
+    # Проверяем, является ли пользователь администратором
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
     
     # Получаем последние транзакции
     transactions = await balance_manager.get_transaction_history(user_id, 5)
