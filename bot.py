@@ -2753,37 +2753,7 @@ def health():
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Максимально простой webhook"""
-    try:
-        if request.method == 'GET':
-            return "OK"
-        
-        # Получаем данные
-        data = request.form.to_dict()
-        logging.info(f"Получены данные: {data}")
-        
-        # Если есть данные, обрабатываем
-        if data and 'operation_id' in data and 'amount' in data:
-            try:
-                # Запускаем обработку в новом потоке
-                import threading
-                def process_in_thread():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(process_payment(data))
-                    loop.close()
-                
-                thread = threading.Thread(target=process_in_thread)
-                thread.start()
-                thread.join(timeout=10)  # Ждем максимум 10 секунд
-                
-            except Exception as e:
-                logging.error(f"Ошибка при обработке платежа: {e}")
-        
-        return "OK"
-        
-    except Exception as e:
-        logging.error(f"Ошибка в webhook: {e}")
-        return "OK"
+    return "OK"
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
