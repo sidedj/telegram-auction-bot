@@ -2707,23 +2707,8 @@ def yoomoney_webhook():
             logging.warning(f"Операция не подтверждена: unaccepted='{unaccepted}'")
             return "error", 400
         
-        # Проверяем подпись (если настроена) - ОТКЛЮЧЕНО ДЛЯ РАБОТЫ
-        if False:  # Полностью отключаем проверку подписи
-            import hashlib
-            sha1_hash = notification_data.get('sha1_hash', '')
-            if sha1_hash:
-                # Формируем строку для проверки подписи (правильный порядок согласно документации YooMoney)
-                check_string = f"{notification_data.get('notification_type')}&{notification_data.get('operation_id')}&{notification_data.get('amount')}&{notification_data.get('currency')}&{notification_data.get('datetime')}&{notification_data.get('sender')}&{notification_data.get('codepro')}&{notification_data.get('label', '')}&{YOOMONEY_SECRET}"
-                calculated_hash = hashlib.sha1(check_string.encode()).hexdigest()
-                
-                logging.info(f"Проверка подписи: calculated={calculated_hash}, received={sha1_hash}")
-                
-                if calculated_hash != sha1_hash:
-                    logging.warning("Неверная подпись уведомления")
-                    return "error", 400
-            else:
-                logging.warning("Отсутствует подпись в уведомлении")
-                return "error", 400
+        # Проверка подписи отключена для работы
+        logging.info("Проверка подписи пропущена - webhook работает без проверки")
         
         # Получаем сумму и ID пользователя
         amount = float(notification_data.get('amount', 0))
