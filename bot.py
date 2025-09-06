@@ -335,11 +335,13 @@ async def process_payment(data):
             
         # Отправляем уведомление пользователю
         try:
+            # Получаем актуальный баланс пользователя
+            user = await db.get_or_create_user(user_id)
             await bot.send_message(
                 user_id,
                 f"✅ <b>Ваш баланс пополнен!</b>\n\n"
                 f"💰 Зачислено: {publications} публикаций\n"
-                f"💳 Текущий баланс: {publications} публикаций\n\n"
+                f"💳 Текущий баланс: {user['balance']} публикаций\n\n"
                 f"Спасибо за пополнение!",
                 parse_mode="HTML"
             )
@@ -815,6 +817,7 @@ async def statistics(message: types.Message):
 @dp.message(F.text.startswith("Пополнить баланс 💳"))
 async def top_up_balance(message: types.Message):
     user_id = message.from_user.id
+    # Получаем актуальный баланс пользователя
     user = await db.get_or_create_user(user_id)
     
     if user['is_admin']:
@@ -969,7 +972,25 @@ async def handle_payment_check(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("payment_success_"))
 async def handle_payment_success(callback: types.CallbackQuery):
     """Обработчик кнопки 'Платеж прошел'"""
-    await callback.answer("✅ Платеж уже обработан!", show_alert=True)
+    user_id = callback.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    # Обновляем меню с актуальным балансом
+    user_menu = await get_user_main_menu(user_id)
+    
+    await callback.answer(
+        f"✅ Платеж уже обработан!\n\n"
+        f"💰 Ваш текущий баланс: {user['balance']} публикаций",
+        show_alert=True
+    )
+    
+    # Отправляем обновленное меню
+    await callback.message.answer(
+        f"💳 <b>Пополнение баланса</b>\n\n"
+        f"💰 <b>Ваш текущий баланс:</b> {user['balance']} публикаций\n\n"
+        "Выберите количество публикаций для покупки:",
+        reply_markup=user_menu
+    )
 
 
 @dp.pre_checkout_query()
