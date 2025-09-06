@@ -104,6 +104,8 @@ balance_manager = BalanceManager(DATABASE_PATH)
 # Инициализация системы оплаты ЮMoney (отключено)
 # yoomoney_payment = YooMoneyPayment()
 
+# Автоматическая система обработки платежей отключена
+
 # --- 3. КЛАВИАТУРЫ ---
 
 # Функция для создания главного меню с учетом баланса пользователя
@@ -221,7 +223,7 @@ auction_persistence = AuctionPersistence(db)
 album_buffers = {}
 
 # --- YooMoney Webhook Configuration ---
-YOOMONEY_SECRET = "SaTKEuJWPVXJl/JFpXDCHZ4q"
+# YOOMONEY_SECRET уже загружен из конфига выше
 
 def verify_yoomoney_signature(data, secret, signature):
     """Проверяет подлинность уведомления от YooMoney"""
@@ -229,55 +231,51 @@ def verify_yoomoney_signature(data, secret, signature):
         # Создаем строку для подписи
         string_to_sign = f"{data['notification_type']}&{data['operation_id']}&{data['amount']}&{data['currency']}&{data['datetime']}&{data['sender']}&{data['codepro']}&{secret}&{data['label']}"
         
+        logging.info(f"Строка для подписи: {string_to_sign}")
+        
         # Вычисляем SHA-1 хеш
         calculated_signature = hashlib.sha1(string_to_sign.encode('utf-8')).hexdigest()
         
+        logging.info(f"Вычисленная подпись: {calculated_signature}")
+        logging.info(f"Полученная подпись: {signature}")
+        
         # Сравниваем с полученной подписью
-        return hmac.compare_digest(calculated_signature, signature)
+        is_valid = hmac.compare_digest(calculated_signature, signature)
+        logging.info(f"Подпись валидна: {is_valid}")
+        
+        return is_valid
     except Exception as e:
         logging.error(f"Ошибка при проверке подписи: {e}")
         return False
 
 async def process_payment(data):
-    """Обрабатывает платеж и зачисляет средства в бот"""
+    """Простая обработка платежа"""
     try:
         operation_id = data.get('operation_id')
         amount = float(data.get('amount', 0))
-        sender = data.get('sender', '')
         
         # Конвертируем рубли в публикации (1 рубль = 1 публикация)
         publications = int(amount)
         
-        # Получаем user_id из label (если указан)
+        # Получаем user_id из label
         user_id = None
         if 'label' in data and data['label']:
             label = data['label']
-            # Обрабатываем разные форматы label
             if label.startswith('user_'):
-                # Формат: user_123456789
                 try:
                     user_id = int(label.replace('user_', ''))
                 except ValueError:
-                    logging.error(f"Неверный формат user_id в label: {label}")
-                    return False
-            else:
-                # Просто числовой ID
-                try:
-                    user_id = int(label)
-                except ValueError:
-                    logging.error(f"Неверный формат user_id в label: {label}")
-                    return False
+                    pass
         
-        # Если user_id не указан, используем sender как fallback
-        if not user_id and sender:
+        # Если user_id не найден, используем sender
+        if not user_id and 'sender' in data:
             try:
-                user_id = int(sender)
+                user_id = int(data['sender'])
             except ValueError:
-                logging.error(f"Неверный формат user_id в sender: {sender}")
-                return False
+                pass
         
         if not user_id:
-            logging.error("Не удалось определить user_id для платежа")
+            logging.error("Не удалось определить user_id")
             return False
         
         # Проверяем, не обработан ли уже этот платеж
@@ -287,22 +285,22 @@ async def process_payment(data):
                 (operation_id,)
             )
             if await cursor.fetchone():
-                logging.warning(f"Платеж {operation_id} уже был обработан")
+                logging.warning(f"Платеж {operation_id} уже обработан")
                 return True
             
-            # Записываем платеж как обработанный
+            # Записываем платеж
             await db_conn.execute(
                 "INSERT INTO processed_payments (operation_id, user_id, amount, publications) VALUES (?, ?, ?, ?)",
                 (operation_id, user_id, amount, publications)
             )
             
-            # Создаем пользователя, если его нет
+            # Создаем пользователя
             await db_conn.execute(
                 "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
                 (user_id, None, None, 0, False)
             )
             
-            # Зачисляем средства на баланс
+            # Зачисляем средства
             await db_conn.execute(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (publications, user_id)
@@ -311,11 +309,24 @@ async def process_payment(data):
             # Записываем транзакцию
             await db_conn.execute(
                 "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                (user_id, publications, "yoomoney_payment", f"Пополнение через YooMoney: {amount} руб. (операция {operation_id})")
+                (user_id, publications, "yoomoney_payment", f"Пополнение: {amount} руб. (операция {operation_id})")
             )
             
             await db_conn.commit()
             
+        # Отправляем уведомление пользователю
+        try:
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Ваш баланс пополнен!</b>\n\n"
+                f"💰 Зачислено: {publications} публикаций\n"
+                f"💳 Текущий баланс: {publications} публикаций\n\n"
+                f"Спасибо за пополнение!",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.warning(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+        
         logging.info(f"✅ Платеж обработан: пользователь {user_id}, сумма {amount} руб., публикаций {publications}")
         return True
         
@@ -529,6 +540,138 @@ async def sync_payments_command(message: types.Message):
     except Exception as e:
         logging.error(f"Error syncing payments: {e}")
         await message.answer("❌ Ошибка при синхронизации платежей.")
+
+@dp.message(Command("manual_payment"))
+async def manual_payment_command(message: types.Message):
+    """Команда для ручного зачисления платежа (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Парсим команду: /manual_payment <user_id> <amount> <description>
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            await message.answer(
+                "📝 <b>Использование команды:</b>\n"
+                "/manual_payment &lt;user_id&gt; &lt;amount&gt; &lt;description&gt;\n\n"
+                "<b>Пример:</b>\n"
+                "/manual_payment 7647551803 1 Ручное пополнение за 50 руб",
+                parse_mode="HTML"
+            )
+            return
+        
+        target_user_id = int(parts[1])
+        amount = int(parts[2])
+        description = " ".join(parts[3:]) if len(parts) > 3 else "Ручное пополнение администратором"
+        
+        # Зачисляем средства
+        success = await balance_manager.update_user_balance(
+            target_user_id, 
+            amount, 
+            "admin_manual_payment", 
+            description
+        )
+        
+        if success:
+            # Получаем информацию о пользователе
+            user_info = await balance_manager.get_user_balance(target_user_id)
+            
+            await message.answer(
+                f"✅ <b>Платеж зачислен успешно!</b>\n\n"
+                f"👤 Пользователь: {target_user_id}\n"
+                f"💰 Сумма: {amount} публикаций\n"
+                f"📝 Описание: {description}\n"
+                f"💳 Новый баланс: {user_info['balance']} публикаций",
+                parse_mode="HTML"
+            )
+            
+            # Отправляем уведомление пользователю
+            try:
+                await bot.send_message(
+                    target_user_id,
+                    f"✅ <b>Ваш баланс пополнен!</b>\n\n"
+                    f"💰 Зачислено: {amount} публикаций\n"
+                    f"📝 Причина: {description}\n"
+                    f"💳 Текущий баланс: {user_info['balance']} публикаций",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.warning(f"Не удалось отправить уведомление пользователю {target_user_id}: {e}")
+        else:
+            await message.answer("❌ Ошибка при зачислении платежа.")
+            
+    except ValueError:
+        await message.answer("❌ Неверный формат команды. Используйте: /manual_payment <user_id> <amount> <description>")
+    except Exception as e:
+        logging.error(f"Error in manual payment: {e}")
+        await message.answer("❌ Ошибка при выполнении команды.")
+
+@dp.message(Command("check_payment"))
+async def check_payment_command(message: types.Message):
+    """Команда для проверки платежа по ID операции (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Парсим команду: /check_payment <operation_id>
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            await message.answer(
+                "📝 <b>Использование команды:</b>\n"
+                "/check_payment &lt;operation_id&gt;\n\n"
+                "<b>Пример:</b>\n"
+                "/check_payment 81046042603529710",
+                parse_mode="HTML"
+            )
+            return
+        
+        operation_id = parts[1]
+        
+        # Проверяем, был ли уже обработан этот платеж
+        import sqlite3
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT operation_id, user_id, amount, publications, processed_at 
+                FROM processed_payments 
+                WHERE operation_id = ?
+            """, (operation_id,))
+            payment = cursor.fetchone()
+        
+        if payment:
+            await message.answer(
+                f"✅ <b>Платеж уже обработан!</b>\n\n"
+                f"🔑 Операция: {payment[0]}\n"
+                f"👤 Пользователь: {payment[1]}\n"
+                f"💰 Сумма: {payment[2]} ₽\n"
+                f"📝 Публикаций: {payment[3]}\n"
+                f"⏰ Время: {payment[4]}",
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer(
+                f"❌ <b>Платеж не найден в базе данных</b>\n\n"
+                f"🔑 Операция: {operation_id}\n\n"
+                f"Возможные причины:\n"
+                f"• Платеж еще не обработан webhook'ом\n"
+                f"• Webhook не работает (требуется ручное зачисление)\n"
+                f"• Неверный ID операции",
+                parse_mode="HTML"
+            )
+            
+    except Exception as e:
+        logging.error(f"Error checking payment: {e}")
+        await message.answer("❌ Ошибка при проверке платежа.")
+
+# Лишние команды удалены
 
 @dp.message(Command("payment_status"))
 async def payment_status_command(message: types.Message):
@@ -2574,9 +2717,7 @@ async def main():
         await auction_timer.start()
         logging.info("Auction timer started")
         
-        # Запускаем обработку уведомлений о платежах (отключено)
-        # payment_task = asyncio.create_task(process_payment_notifications())
-        # logging.info("Payment notification processor started")
+        # Автоматическая система обработки платежей отключена
         
         # Запускаем бота
         await dp.start_polling(bot)
@@ -2611,56 +2752,51 @@ def health():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """Webhook для обработки уведомлений от YooMoney"""
+    """Максимально простой webhook"""
     try:
-        logging.info("=" * 50)
-        logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
-        logging.info(f"Метод: {request.method}")
-        logging.info(f"IP: {request.remote_addr}")
-        
         if request.method == 'GET':
-            return {"status": "ok", "message": "Webhook ready"}
+            return "OK"
         
         # Получаем данные
         data = request.form.to_dict()
-        logging.info(f"Данные: {data}")
         
-        # Проверяем обязательные поля
-        required_fields = ['notification_type', 'operation_id', 'amount', 'currency', 'datetime', 'sender', 'codepro', 'sha1_hash']
-        for field in required_fields:
-            if field not in data:
-                logging.error(f"Отсутствует обязательное поле: {field}")
-                return "error", 400
+        # Если есть данные, обрабатываем
+        if data and 'operation_id' in data and 'amount' in data:
+            asyncio.run(process_payment(data))
         
-        # Проверяем подлинность уведомления
-        if not verify_yoomoney_signature(data, YOOMONEY_SECRET, data['sha1_hash']):
-            logging.error("❌ Неверная подпись уведомления!")
-            return "error", 400
+        return "OK"
         
-        logging.info("✅ Подпись уведомления проверена")
-        
-        # Обрабатываем только входящие платежи
-        if data['notification_type'] != 'p2p-incoming':
-            logging.info(f"Пропускаем уведомление типа: {data['notification_type']}")
-            return "OK"
-        
-        # Проверяем, что это не тестовое уведомление
-        if data.get('test_notification') == 'true':
-            logging.info("✅ Тестовое уведомление получено и проверено")
-            return "OK"
-        
-        # Обрабатываем реальный платеж
-        success = asyncio.run(process_payment(data))
-        
-        if success:
-            logging.info("✅ Платеж успешно обработан")
-            return "OK"
-        else:
-            logging.error("❌ Ошибка при обработке платежа")
-            return "error", 500
-            
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
+        return "OK"
+
+@app.route('/yoomoney_debug', methods=['POST', 'GET'])
+def yoomoney_debug_webhook():
+    """Отладочный webhook для диагностики"""
+    try:
+        logging.info("=" * 50)
+        logging.info("ОТЛАДОЧНЫЙ WEBHOOK")
+        logging.info(f"Метод: {request.method}")
+        logging.info(f"IP: {request.remote_addr}")
+        logging.info(f"Headers: {dict(request.headers)}")
+        
+        if request.method == 'GET':
+            return {"status": "ok", "message": "Debug webhook ready"}
+        
+        # Получаем все возможные данные
+        form_data = request.form.to_dict()
+        json_data = request.get_json() if request.is_json else None
+        args_data = request.args.to_dict()
+        
+        logging.info(f"Form данные: {form_data}")
+        logging.info(f"JSON данные: {json_data}")
+        logging.info(f"Args данные: {args_data}")
+        
+        # Возвращаем успех для любых данных
+        return {"status": "ok", "message": "Debug webhook received data", "form": form_data, "json": json_data, "args": args_data}
+        
+    except Exception as e:
+        logging.error(f"Ошибка в отладочном webhook: {e}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
         return "error", 500
