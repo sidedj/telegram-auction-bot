@@ -2810,7 +2810,7 @@ def health():
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Простой webhook - сразу начисляет публикации"""
-    logging.info("=== WEBHOOK VERSION 10.0 - ИСПРАВЛЕННАЯ ВЕРСИЯ ===")
+    logging.info("=== WEBHOOK VERSION 11.0 - МАКСИМАЛЬНО ПРОСТАЯ ВЕРСИЯ ===")
     
     if request.method == 'GET':
         return "OK"
@@ -2861,8 +2861,8 @@ def yoomoney_webhook():
         except Exception as e:
             logging.error(f"❌ Ошибка обновления баланса: {e}")
     
-    # Возвращаем OK с правильным статусом
-    return "OK", 200
+    # Возвращаем OK
+    return "OK"
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
