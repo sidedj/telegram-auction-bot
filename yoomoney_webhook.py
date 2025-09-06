@@ -52,11 +52,22 @@ async def process_payment(data):
         # Получаем user_id из label (если указан)
         user_id = None
         if 'label' in data and data['label']:
-            try:
-                user_id = int(data['label'])
-            except ValueError:
-                logger.error(f"Неверный формат user_id в label: {data['label']}")
-                return False
+            label = data['label']
+            # Обрабатываем разные форматы label
+            if label.startswith('user_'):
+                # Формат: user_123456789
+                try:
+                    user_id = int(label.replace('user_', ''))
+                except ValueError:
+                    logger.error(f"Неверный формат user_id в label: {label}")
+                    return False
+            else:
+                # Просто числовой ID
+                try:
+                    user_id = int(label)
+                except ValueError:
+                    logger.error(f"Неверный формат user_id в label: {label}")
+                    return False
         
         # Если user_id не указан, используем sender как fallback
         if not user_id and sender:
