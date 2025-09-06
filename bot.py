@@ -273,8 +273,8 @@ async def process_payment(data):
         elif 552 <= amount <= 648:  # Тариф 600₽ (комиссия до 8%)
             publications = 20
         else:
-            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
-            publications = int(amount)
+            # Если сумма не соответствует тарифам, не зачисляем публикации
+            publications = 0
         
         # Получаем user_id из label
         user_id = None
@@ -2852,8 +2852,8 @@ def yoomoney_webhook():
         elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
             publications = 20
         else:
-            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
-            publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
+            # Если сумма не соответствует тарифам, не зачисляем публикации
+            publications = 0
         
         if publications > 0:
             try:
@@ -2979,8 +2979,8 @@ def webhook_new():
         elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
             publications = 20
         else:
-            # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
-            publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
+            # Если сумма не соответствует тарифам, не зачисляем публикации
+            publications = 0
         
         if publications > 0:
             try:
