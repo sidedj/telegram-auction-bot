@@ -2697,14 +2697,13 @@ def test_endpoint():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """МИНИМАЛЬНЫЙ webhook для тестирования"""
+    """УЛЬТРА ПРОСТОЙ webhook для тестирования"""
     try:
         logger.info("=" * 50)
         logger.info("ПОЛУЧЕН ЗАПРОС")
         logger.info(f"Метод: {request.method}")
         logger.info(f"URL: {request.url}")
         logger.info(f"IP: {request.remote_addr}")
-        logger.info(f"Заголовки: {dict(request.headers)}")
         
         if request.method == 'GET':
             return {"status": "ok", "message": "Webhook ready"}
