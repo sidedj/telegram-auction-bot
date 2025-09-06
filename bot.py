@@ -2793,8 +2793,8 @@ def yoomoney_webhook():
         
         logging.info("✅ Подпись уведомления проверена")
         
-        # Обрабатываем только входящие платежи
-        if data['notification_type'] != 'p2p-incoming':
+        # Обрабатываем входящие платежи (p2p и с карты)
+        if data['notification_type'] not in ['p2p-incoming', 'card-incoming']:
             logging.info(f"Пропускаем уведомление типа: {data['notification_type']}")
             return "OK"
         
