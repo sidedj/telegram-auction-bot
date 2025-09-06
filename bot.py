@@ -2699,38 +2699,39 @@ def test_endpoint():
 def yoomoney_webhook():
     """УЛЬТРА ПРОСТОЙ webhook для тестирования"""
     try:
-        logger.info("=" * 50)
-        logger.info("ПОЛУЧЕН ЗАПРОС")
-        logger.info(f"Метод: {request.method}")
-        logger.info(f"URL: {request.url}")
-        logger.info(f"IP: {request.remote_addr}")
+        print("=" * 50)
+        print("ПОЛУЧЕН ЗАПРОС")
+        print(f"Метод: {request.method}")
+        print(f"URL: {request.url}")
+        print(f"IP: {request.remote_addr}")
         
         if request.method == 'GET':
             return {"status": "ok", "message": "Webhook ready"}
         
         # Получаем данные
         form_data = request.form.to_dict()
-        logger.info(f"Данные формы: {form_data}")
+        print(f"Данные формы: {form_data}")
         
         # Простая обработка
         amount = form_data.get('amount', '0')
         is_test = form_data.get('test_notification') == 'true'
         
-        logger.info(f"Сумма: {amount}")
-        logger.info(f"Тестовое: {is_test}")
+        print(f"Сумма: {amount}")
+        print(f"Тестовое: {is_test}")
         
         if is_test:
-            logger.info("✅ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ОБРАБОТАНО УСПЕШНО!")
+            print("✅ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ОБРАБОТАНО УСПЕШНО!")
             return "ok", 200
         else:
-            logger.info("✅ РЕАЛЬНЫЙ ПЛАТЕЖ ОБРАБОТАН УСПЕШНО!")
+            print("✅ РЕАЛЬНЫЙ ПЛАТЕЖ ОБРАБОТАН УСПЕШНО!")
             return "ok", 200
             
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        print(f"Ошибка: {e}")
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        print(f"Traceback: {traceback.format_exc()}")
         return "error", 500
+
 
 def run_flask_app():
     """Запуск Flask приложения"""
