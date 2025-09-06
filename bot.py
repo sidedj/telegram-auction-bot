@@ -119,6 +119,12 @@ def get_main_menu(user_balance=None, is_admin=False):
         input_field_placeholder="Нажмите /start для начала работы"
     )
 
+# Функция для получения актуального меню с балансом пользователя
+async def get_user_main_menu(user_id: int):
+    """Получить главное меню с актуальным балансом пользователя"""
+    user = await db.get_or_create_user(user_id)
+    return get_main_menu(user['balance'], user['is_admin'])
+
 # Статичное главное меню для случаев, когда баланс неизвестен (используется как fallback)
 main_menu = get_main_menu()
 
@@ -695,11 +701,12 @@ async def start_auction_creation(message: types.Message, state: FSMContext):
     if not is_admin_user:
         is_subscribed = await check_user_subscription(user_id)
         if not is_subscribed:
+            user_menu = await get_user_main_menu(user_id)
             await message.answer(
                 f"❌ <b>Для создания аукционов необходимо быть подписанным на канал!</b>\n\n"
                 f"Подпишитесь на канал: <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>\n"
                 f"После подписки попробуйте создать аукцион снова.",
-                reply_markup=main_menu,
+                reply_markup=user_menu,
                 parse_mode="HTML"
             )
             return
@@ -708,27 +715,31 @@ async def start_auction_creation(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state:
         if current_state == AuctionCreation.waiting_for_photos.state:
+            user_menu = await get_user_main_menu(user_id)
             await message.answer(
                 "Вы уже начали создание лота. Отправьте до 10 фото. Когда хватит — напишите «далее».\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu
+                reply_markup=user_menu
             )
             return
         if current_state == AuctionCreation.waiting_for_description.state:
+            user_menu = await get_user_main_menu(user_id)
             await message.answer(
                 "Фото уже получено. Введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu
+                reply_markup=user_menu
             )
             return
         if current_state == AuctionCreation.waiting_for_price.state:
+            user_menu = await get_user_main_menu(user_id)
             await message.answer(
                 "Описание сохранено. Укажите стартовую цену в рублях (одно число).\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu
+                reply_markup=user_menu
             )
             return
         if current_state == AuctionCreation.waiting_for_blitz_price.state:
+            user_menu = await get_user_main_menu(user_id)
             await message.answer(
                 "Стартовая цена сохранена. Укажите сумму полного выкупа (блиц-цена), не меньше стартовой.\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu
+                reply_markup=user_menu
             )
             return
         if current_state == AuctionCreation.waiting_for_duration.state:
@@ -740,13 +751,15 @@ async def start_auction_creation(message: types.Message, state: FSMContext):
 
     await state.set_state(AuctionCreation.waiting_for_photos)
     await state.update_data(media=[])
-    await message.answer("Отправьте до 10 фото одним разом (альбомом) или по одному. Переход к описанию произойдет автоматически.", reply_markup=main_menu)
+    user_menu = await get_user_main_menu(user_id)
+    await message.answer("Отправьте до 10 фото одним разом (альбомом) или по одному. Переход к описанию произойдет автоматически.", reply_markup=user_menu)
 
 # Обработка отмены на любом шаге
 @dp.message(StateFilter('*'), F.text.lower() == "отмена")
 async def cancel_handler(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Создание отменено.", reply_markup=main_menu)
+    user_menu = await get_user_main_menu(message.from_user.id)
+    await message.answer("Создание отменено.", reply_markup=user_menu)
 
 @dp.message(StateFilter(AuctionCreation.waiting_for_photos), (F.photo | F.video))
 async def process_photo(message: types.Message, state: FSMContext):
@@ -783,9 +796,10 @@ async def process_photo(message: types.Message, state: FSMContext):
             media_inner = media_inner[:10]
             await state.update_data(media=media_inner)
             await state.set_state(AuctionCreation.waiting_for_description)
+            user_menu = await get_user_main_menu(message.from_user.id)
             await message.answer(
                 "Фото приняты! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu,
+                reply_markup=user_menu,
             )
 
         buf["task"] = asyncio.create_task(finalize_after_delay())
@@ -796,7 +810,8 @@ async def process_photo(message: types.Message, state: FSMContext):
     data = await state.get_data()
     media = list(data.get("media", []))
     if len(media) >= 10:
-        await message.answer("Достигнут лимит 10 фото.", reply_markup=main_menu)
+        user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Достигнут лимит 10 фото.", reply_markup=user_menu)
         return
     if message.photo:
         media.append({"type": "photo", "file_id": message.photo[-1].file_id})
@@ -804,9 +819,10 @@ async def process_photo(message: types.Message, state: FSMContext):
         media.append({"type": "video", "file_id": message.video.file_id})
     await state.update_data(media=media)
     await state.set_state(AuctionCreation.waiting_for_description)
+    user_menu = await get_user_main_menu(message.from_user.id)
     await message.answer(
         "Фото приняты! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-        reply_markup=main_menu,
+        reply_markup=user_menu,
     )
 
 # Поддержка случая, когда пользователь отправляет изображение как файл (document)
@@ -821,17 +837,20 @@ async def process_photo_document(message: types.Message, state: FSMContext):
         data = await state.get_data()
         media = list(data.get("media", []))
         if len(media) >= 10:
-            await message.answer("Достигнут лимит 10 медиа.", reply_markup=main_menu)
-            return
+            user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Достигнут лимит 10 медиа.", reply_markup=user_menu)
+        return
         media.append({"type": "video" if mime_type.startswith("video/") else "photo", "file_id": message.document.file_id})
         await state.update_data(media=media)
         await state.set_state(AuctionCreation.waiting_for_description)
+        user_menu = await get_user_main_menu(message.from_user.id)
         await message.answer(
             "Медиа принято! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-            reply_markup=main_menu,
+            reply_markup=user_menu,
         )
     else:
-        await message.answer("Похоже, вы отправили файл не с изображением. Пожалуйста, отправьте фото товара.", reply_markup=main_menu)
+        user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Похоже, вы отправили файл не с изображением. Пожалуйста, отправьте фото товара.", reply_markup=user_menu)
 
 # Текст на шаге фотографий: показываем короткую подсказку один раз
 @dp.message(StateFilter(AuctionCreation.waiting_for_photos), F.text)
@@ -839,9 +858,10 @@ async def handle_text_on_photos_step(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if not data.get("hint_shown_on_photos"):
         await state.update_data(hint_shown_on_photos=True)
+        user_menu = await get_user_main_menu(message.from_user.id)
         await message.answer(
             "Отправьте фото/видео альбомом (до 10) или одно медиа — переход будет автоматический.",
-            reply_markup=main_menu,
+            reply_markup=user_menu,
         )
 
 @dp.message(StateFilter(AuctionCreation.waiting_for_description), F.text)
@@ -867,9 +887,10 @@ async def process_description(message: types.Message, state: FSMContext):
     # Если нарушений нет, сохраняем как обычно
     await state.update_data(description=filtered_description)
     await state.set_state(AuctionCreation.waiting_for_price)
+    user_menu = await get_user_main_menu(message.from_user.id)
     await message.answer(
         "Описание сохранено. Укажите стартовую цену в рублях (только число).\n\n<i>Для отмены напишите «отмена»</i>",
-        reply_markup=main_menu,
+        reply_markup=user_menu,
     )
 
 @dp.message(StateFilter(AuctionCreation.waiting_for_price), F.text)
@@ -881,9 +902,10 @@ async def process_price(message: types.Message, state: FSMContext):
     start_price = int(text)
     await state.update_data(start_price=start_price)
     await state.set_state(AuctionCreation.waiting_for_blitz_price)
+    user_menu = await get_user_main_menu(message.from_user.id)
     await message.answer(
         "Стартовая цена сохранена. Теперь укажите сумму полного выкупа (блиц-цена), не меньше стартовой.",
-        reply_markup=main_menu,
+        reply_markup=user_menu,
     )
 
 @dp.message(StateFilter(AuctionCreation.waiting_for_blitz_price), F.text)
@@ -1003,9 +1025,10 @@ async def process_buy_post_photo(message: types.Message, state: FSMContext):
             media_inner = media_inner[:10]
             await state.update_data(media=media_inner)
             await state.set_state(BuyPostCreation.waiting_for_description)
+            user_menu = await get_user_main_menu(message.from_user.id)
             await message.answer(
                 "Фото приняты! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-                reply_markup=main_menu,
+                reply_markup=user_menu,
             )
 
         buf["task"] = asyncio.create_task(finalize_after_delay())
@@ -1016,7 +1039,8 @@ async def process_buy_post_photo(message: types.Message, state: FSMContext):
     data = await state.get_data()
     media = list(data.get("media", []))
     if len(media) >= 10:
-        await message.answer("Достигнут лимит 10 фото.", reply_markup=main_menu)
+        user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Достигнут лимит 10 фото.", reply_markup=user_menu)
         return
     if message.photo:
         media.append({"type": "photo", "file_id": message.photo[-1].file_id})
@@ -1024,9 +1048,10 @@ async def process_buy_post_photo(message: types.Message, state: FSMContext):
         media.append({"type": "video", "file_id": message.video.file_id})
     await state.update_data(media=media)
     await state.set_state(BuyPostCreation.waiting_for_description)
+    user_menu = await get_user_main_menu(message.from_user.id)
     await message.answer(
         "Фото приняты! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-        reply_markup=main_menu,
+        reply_markup=user_menu,
     )
 
 # Поддержка случая, когда пользователь отправляет изображение как файл (document) для байт поста
@@ -1041,17 +1066,20 @@ async def process_buy_post_photo_document(message: types.Message, state: FSMCont
         data = await state.get_data()
         media = list(data.get("media", []))
         if len(media) >= 10:
-            await message.answer("Достигнут лимит 10 медиа.", reply_markup=main_menu)
-            return
+            user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Достигнут лимит 10 медиа.", reply_markup=user_menu)
+        return
         media.append({"type": "video" if mime_type.startswith("video/") else "photo", "file_id": message.document.file_id})
         await state.update_data(media=media)
         await state.set_state(BuyPostCreation.waiting_for_description)
+        user_menu = await get_user_main_menu(message.from_user.id)
         await message.answer(
             "Медиа принято! Теперь введите описание товара (название, состояние и т.д.).\n\n<i>Для отмены напишите «отмена»</i>",
-            reply_markup=main_menu,
+            reply_markup=user_menu,
         )
     else:
-        await message.answer("Похоже, вы отправили файл не с изображением. Пожалуйста, отправьте фото товара.", reply_markup=main_menu)
+        user_menu = await get_user_main_menu(message.from_user.id)
+        await message.answer("Похоже, вы отправили файл не с изображением. Пожалуйста, отправьте фото товара.", reply_markup=user_menu)
 
 # Текст на шаге фотографий для байт поста
 @dp.message(StateFilter(BuyPostCreation.waiting_for_photos), F.text)
@@ -1059,9 +1087,10 @@ async def handle_text_on_buy_post_photos_step(message: types.Message, state: FSM
     data = await state.get_data()
     if not data.get("hint_shown_on_photos"):
         await state.update_data(hint_shown_on_photos=True)
+        user_menu = await get_user_main_menu(message.from_user.id)
         await message.answer(
             "Отправьте фото/видео альбомом (до 10) или одно медиа — переход будет автоматический.",
-            reply_markup=main_menu,
+            reply_markup=user_menu,
         )
 
 @dp.message(StateFilter(BuyPostCreation.waiting_for_description), F.text)
@@ -1087,9 +1116,10 @@ async def process_buy_post_description(message: types.Message, state: FSMContext
     # Если нарушений нет, сохраняем как обычно
     await state.update_data(description=filtered_description)
     await state.set_state(BuyPostCreation.waiting_for_price)
+    user_menu = await get_user_main_menu(message.from_user.id)
     await message.answer(
         "Описание сохранено. Укажите цену товара в рублях (только число).\n\n<i>Для отмены напишите «отмена»</i>",
-        reply_markup=main_menu,
+        reply_markup=user_menu,
     )
 
 @dp.message(StateFilter(BuyPostCreation.waiting_for_price), F.text)
@@ -1161,7 +1191,8 @@ async def delete_auction(callback: types.CallbackQuery):
         await db.update_auction_status(latest_auction['id'], 'deleted')
     
     await callback.message.delete()
-    await callback.message.answer("Аукцион удален.", reply_markup=main_menu)
+    user_menu = await get_user_main_menu(callback.from_user.id)
+    await callback.message.answer("Аукцион удален.", reply_markup=user_menu)
     await callback.answer()
 
 @dp.callback_query(F.data == "edit_auction")
@@ -1247,11 +1278,12 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
     if not is_admin_user:
         is_subscribed = await check_user_subscription(user_id)
         if not is_subscribed:
+            user_menu = await get_user_main_menu(user_id)
             await callback.message.answer(
                 f"❌ <b>Для создания аукционов необходимо быть подписанным на канал!</b>\n\n"
                 f"Подпишитесь на канал: <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>\n"
                 f"После подписки попробуйте создать аукцион снова.",
-                reply_markup=main_menu,
+                reply_markup=user_menu,
                 parse_mode="HTML"
             )
             await callback.answer()
@@ -2171,12 +2203,12 @@ async def add_balance_command(message: types.Message):
         logging.info(f"Balance update result: {success}")
         
         if success:
-            # Получаем обновленную информацию о пользователе
-            updated_user = await db.get_or_create_user(target_user_id)
+            # Получаем актуальный баланс напрямую из базы данных
+            new_balance = await db.get_user_balance(target_user_id)
             await message.answer(
                 f"✅ Баланс пользователя {target_user_id} обновлен!\n"
                 f"Добавлено: +{amount} публикаций\n"
-                f"Новый баланс: {updated_user['balance']} публикаций\n"
+                f"Новый баланс: {new_balance} публикаций\n"
                 f"Описание: {description}"
             )
         else:
@@ -2186,7 +2218,9 @@ async def add_balance_command(message: types.Message):
         await message.answer("❌ Неверный формат данных. ID и количество должны быть числами.")
     except Exception as e:
         logging.error(f"Error in add_balance command: {e}")
-        await message.answer("❌ Произошла ошибка при обновлении баланса.")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        await message.answer(f"❌ Произошла ошибка при обновлении баланса.\n\nОшибка: {str(e)}")
 
 @dp.message(F.text.startswith("/remove_balance"))
 async def remove_balance_command(message: types.Message):
@@ -2220,11 +2254,12 @@ async def remove_balance_command(message: types.Message):
         )
         
         if success:
-            target_user = await db.get_or_create_user(target_user_id)
+            # Получаем актуальный баланс напрямую из базы данных
+            new_balance = await db.get_user_balance(target_user_id)
             await message.answer(
                 f"✅ Баланс пользователя {target_user_id} обновлен!\n"
                 f"Списано: -{amount} публикаций\n"
-                f"Новый баланс: {target_user['balance']} публикаций\n"
+                f"Новый баланс: {new_balance} публикаций\n"
                 f"Описание: {description}"
             )
         else:
@@ -2234,7 +2269,9 @@ async def remove_balance_command(message: types.Message):
         await message.answer("❌ Неверный формат данных. ID и количество должны быть числами.")
     except Exception as e:
         logging.error(f"Error in remove_balance command: {e}")
-        await message.answer("❌ Произошла ошибка при обновлении баланса.")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        await message.answer(f"❌ Произошла ошибка при обновлении баланса.\n\nОшибка: {str(e)}")
 
 @dp.message(F.text == "/save_state")
 async def save_state_command(message: types.Message):
@@ -2634,7 +2671,10 @@ def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
     try:
         logging.info("Получено уведомление от ЮMoney")
-        logging.info(f"Данные: {request.form.to_dict()}")
+        logging.info(f"Заголовки: {dict(request.headers)}")
+        logging.info(f"Данные формы: {request.form.to_dict()}")
+        logging.info(f"Метод: {request.method}")
+        logging.info(f"IP адрес: {request.remote_addr}")
         
         # Получаем данные из формы
         notification_data = request.form.to_dict()
@@ -2650,8 +2690,11 @@ def yoomoney_webhook():
             return "error", 400
         
         # Проверяем, что операция подтверждена
-        if notification_data.get('unaccepted') != 'false':
-            logging.warning("Операция не подтверждена")
+        unaccepted = notification_data.get('unaccepted')
+        logging.info(f"unaccepted значение: '{unaccepted}' (тип: {type(unaccepted)})")
+        
+        if unaccepted not in ['false', False, None, '']:
+            logging.warning(f"Операция не подтверждена: unaccepted='{unaccepted}'")
             return "error", 400
         
         # Проверяем подпись (если настроена)
@@ -2742,11 +2785,14 @@ def yoomoney_webhook():
         send_telegram_message_webhook(user_id, message)
         
         logging.info(f"Пользователю {user_id} начислено {publications} публикаций. Новый баланс: {new_balance}")
+        logging.info(f"Webhook обработан успешно для операции {operation_id}")
         
         return "ok", 200
         
     except Exception as e:
         logging.error(f"Ошибка при обработке уведомления: {e}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         return "error", 500
 
 def run_flask_app():
@@ -2764,10 +2810,12 @@ def run_bot_with_webhook():
     asyncio.run(main())
 
 if __name__ == "__main__":
-    # Проверяем, запущен ли на Railway
-    if os.getenv("RAILWAY_ENVIRONMENT"):
-        # На Railway - запускаем с webhook
+    # Проверяем, запущен ли на Railway или нужно использовать webhook
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("USE_WEBHOOK", "false").lower() == "true":
+        # На Railway или с принудительным webhook - запускаем с webhook
+        print("🚀 Запуск бота с webhook сервером...")
         run_bot_with_webhook()
     else:
         # Локально - обычный polling
+        print("🚀 Запуск бота в режиме polling...")
         asyncio.run(main())
