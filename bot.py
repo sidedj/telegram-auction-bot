@@ -2676,6 +2676,20 @@ def yoomoney_test():
         "receiver": YOOMONEY_RECEIVER
     }
 
+@app.route('/test', methods=['GET', 'POST'])
+def test_endpoint():
+    """Простой тестовый endpoint для проверки входящих запросов"""
+    logging.info(f"Получен запрос: {request.method} {request.url}")
+    logging.info(f"Заголовки: {dict(request.headers)}")
+    logging.info(f"Данные: {request.form.to_dict() if request.form else request.get_json()}")
+    
+    return {
+        "status": "ok",
+        "method": request.method,
+        "headers": dict(request.headers),
+        "data": request.form.to_dict() if request.form else request.get_json()
+    }
+
 @app.route('/yoomoney', methods=['POST'])
 def yoomoney_webhook():
     """Обработка уведомлений от ЮMoney"""
