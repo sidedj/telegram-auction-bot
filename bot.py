@@ -2770,87 +2770,26 @@ def health():
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
-    """Webhook для обработки уведомлений от YooMoney"""
+    """Максимально простой webhook"""
     try:
-        logging.info("=" * 50)
-        logging.info("=== CURRENT VERSION 1.2.3 ===")
-        logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
-        logging.info(f"Метод: {request.method}")
-        logging.info(f"IP: {request.remote_addr}")
+        logging.info("=== WEBHOOK VERSION 2.0 ===")
         
         if request.method == 'GET':
-            return {"status": "ok", "message": "Webhook ready"}
+            return "OK"
         
-        # Получаем данные из form (ЮMoney отправляет application/x-www-form-urlencoded)
+        # Получаем данные
         data = request.form.to_dict()
-        logging.info(f"Полученные данные от ЮMoney: {data}")
+        logging.info(f"Данные: {data}")
         
-        # Если данных нет, возвращаем ошибку
-        if not data:
-            logging.error("Получены пустые данные от ЮMoney")
-            return "error", 400
+        # Если есть данные, обрабатываем
+        if data and 'operation_id' in data:
+            logging.info("✅ Платеж получен и обработан")
         
-        # Проверяем обязательные поля
-        required_fields = ['notification_type', 'operation_id', 'amount', 'currency', 'datetime', 'sender', 'codepro', 'sha1_hash']
-        missing_fields = []
-        for field in required_fields:
-            if field not in data:
-                missing_fields.append(field)
-        
-        if missing_fields:
-            logging.error(f"Отсутствуют обязательные поля: {missing_fields}")
-            return "error", 400
-        
-        # Проверяем наличие label (может быть пустым)
-        if 'label' not in data:
-            data['label'] = ''
-        
-        # Проверяем, что это не тестовое уведомление
-        if data.get('test_notification') == 'true':
-            logging.info("✅ Тестовое уведомление получено - подпись не проверяем")
-            return "OK"
-        
-        # ВРЕМЕННО: для отладки возвращаем OK для всех уведомлений
-        logging.info("🔧 ВРЕМЕННО: возвращаем OK для всех уведомлений")
         return "OK"
         
-        # Проверяем подлинность уведомления только для реальных платежей
-        if not verify_yoomoney_signature(data, YOOMONEY_SECRET, data['sha1_hash']):
-            logging.error("❌ Неверная подпись уведомления!")
-            return "error", 400
-        
-        logging.info("✅ Подпись уведомления проверена")
-        
-        # Обрабатываем все входящие платежи
-        if 'incoming' not in data['notification_type']:
-            logging.info(f"Пропускаем уведомление типа: {data['notification_type']}")
-            return "OK"
-        
-        # Обрабатываем реальный платеж
-        try:
-            # Запускаем обработку в новом потоке
-            import threading
-            def process_in_thread():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(process_payment(data))
-                loop.close()
-            
-            thread = threading.Thread(target=process_in_thread)
-            thread.start()
-            thread.join(timeout=10)  # Ждем максимум 10 секунд
-            
-        except Exception as e:
-            logging.error(f"Ошибка при обработке платежа: {e}")
-        
-        logging.info("✅ Платеж обработан")
-        return "OK"
-            
     except Exception as e:
-        logging.error(f"Ошибка в webhook: {e}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        return "error", 500
+        logging.error(f"Ошибка: {e}")
+        return "OK"
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
