@@ -88,6 +88,17 @@ class Database:
                 )
             """)
             
+            # Таблица обработанных платежей (для предотвращения дублирования)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS processed_payments (
+                    operation_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    amount REAL,
+                    publications INTEGER,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             await db.commit()
             logging.info("Database initialized successfully")
 
