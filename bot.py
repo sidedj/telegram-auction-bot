@@ -2894,32 +2894,8 @@ def webhook_new():
                 
                 logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
                 
-                # Отправляем уведомление
-                try:
-                    import asyncio
-                    from notifications import send_balance_notification
-                    
-                    # Получаем новый баланс
-                    with sqlite3.connect(DATABASE_PATH) as db_conn:
-                        cursor = db_conn.cursor()
-                        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-                        new_balance = cursor.fetchone()[0]
-                    
-                    # Отправляем уведомление асинхронно
-                    async def send_notification():
-                        await send_balance_notification(
-                            user_id=user_id,
-                            amount=withdraw_amount,  # Рубли
-                            publications=publications,
-                            new_balance=new_balance
-                        )
-                    
-                    # Запускаем асинхронную функцию
-                    asyncio.run(send_notification())
-                    logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
-                    
-                except Exception as e:
-                    logging.error(f"❌ Ошибка отправки уведомления: {e}")
+                # Пока отключаем уведомления для отладки
+                logging.info(f"💡 Уведомления временно отключены для отладки")
                 
             except Exception as e:
                 logging.error(f"❌ Ошибка обновления баланса: {e}")
