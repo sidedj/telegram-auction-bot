@@ -2846,11 +2846,11 @@ def yoomoney_webhook():
         if 46 <= withdraw_amount <= 54:  # Тариф 50₽ (комиссия до 8%)
             publications = 1
         elif 184 <= withdraw_amount <= 216:  # Тариф 200₽ (комиссия до 8%)
-            publications = 4
+            publications = 5
         elif 322 <= withdraw_amount <= 378:  # Тариф 350₽ (комиссия до 8%)
-            publications = 7
+            publications = 10
         elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
-            publications = 12
+            publications = 20
         else:
             # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
             publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
@@ -2973,11 +2973,11 @@ def webhook_new():
         if 46 <= withdraw_amount <= 54:  # Тариф 50₽ (комиссия до 8%)
             publications = 1
         elif 184 <= withdraw_amount <= 216:  # Тариф 200₽ (комиссия до 8%)
-            publications = 4
+            publications = 5
         elif 322 <= withdraw_amount <= 378:  # Тариф 350₽ (комиссия до 8%)
-            publications = 7
+            publications = 10
         elif 552 <= withdraw_amount <= 648:  # Тариф 600₽ (комиссия до 8%)
-            publications = 12
+            publications = 20
         else:
             # Если сумма не соответствует тарифам, зачисляем по 1₽ = 1 публикация
             publications = int(withdraw_amount) if withdraw_amount >= 1 else 0
