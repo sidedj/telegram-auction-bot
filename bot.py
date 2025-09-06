@@ -2618,6 +2618,16 @@ def is_payment_processed(operation_id: str) -> bool:
     try:
         with sqlite3.connect(DATABASE_PATH) as conn:
             cursor = conn.cursor()
+            # Создаем таблицу, если её нет
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS processed_payments (
+                    operation_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    amount REAL,
+                    publications INTEGER,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             cursor.execute("SELECT 1 FROM processed_payments WHERE operation_id = ?", (operation_id,))
             return cursor.fetchone() is not None
     except Exception as e:
