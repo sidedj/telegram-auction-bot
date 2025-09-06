@@ -253,13 +253,13 @@ async def process_payment(data):
     try:
         operation_id = data.get('operation_id')
         
-        # Используем withdraw_amount (сумма без комиссии) для определения количества публикаций
+        # Используем withdraw_amount (сумма без комиссии) для определения тарифа
         if 'withdraw_amount' in data and data['withdraw_amount']:
             amount = float(data['withdraw_amount'])
         else:
             amount = float(data.get('amount', 0))
         
-        # Определяем количество публикаций по сумме платежа
+        # Определяем количество публикаций по тарифу (сумма до комиссии)
         if amount == 50:
             publications = 1
         elif amount == 200:
