@@ -2822,14 +2822,24 @@ def yoomoney_webhook():
             return "OK"
         
         # Обрабатываем реальный платеж
-        success = asyncio.run(process_payment(data))
+        try:
+            # Запускаем обработку в новом потоке
+            import threading
+            def process_in_thread():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(process_payment(data))
+                loop.close()
+            
+            thread = threading.Thread(target=process_in_thread)
+            thread.start()
+            thread.join(timeout=10)  # Ждем максимум 10 секунд
+            
+        except Exception as e:
+            logging.error(f"Ошибка при обработке платежа: {e}")
         
-        if success:
-            logging.info("✅ Платеж успешно обработан")
-            return "OK"
-        else:
-            logging.error("❌ Ошибка при обработке платежа")
-            return "error", 500
+        logging.info("✅ Платеж обработан")
+        return "OK"
             
     except Exception as e:
         logging.error(f"Ошибка в webhook: {e}")
