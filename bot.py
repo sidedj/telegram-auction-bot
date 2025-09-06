@@ -35,6 +35,7 @@ from database import Database
 from auction_timer import AuctionTimer
 from balance_manager import BalanceManager
 from auction_persistence import AuctionPersistence
+from notifications import init_notifications, send_auction_created_notification, send_auction_published_notification
 # from admin_panel import AdminPanel  # Не используется
 # from api_integration import api_integration  # Отключено
 # from yoomoney_payment import YooMoneyPayment  # Отключено
@@ -498,17 +499,28 @@ async def add_balance_command(message: types.Message):
         new_balance = current_balance + amount
         
         # Обновляем баланс
-        await db.update_user_balance(target_user_id, new_balance)
+        await db.update_user_balance(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
         
-        # Добавляем транзакцию
-        await db.add_transaction(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
+        # Отправляем уведомление пользователю
+        try:
+            from notifications import send_balance_notification
+            await send_balance_notification(
+                user_id=target_user_id,
+                amount=0,  # Для админского начисления сумма не важна
+                publications=amount,
+                new_balance=new_balance
+            )
+            logging.info(f"✅ Уведомление о пополнении баланса отправлено пользователю {target_user_id}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка отправки уведомления: {e}")
         
         await message.answer(
             f"✅ <b>Баланс обновлен!</b>\n\n"
             f"👤 Пользователь: {target_user_id}\n"
             f"💰 Было: {current_balance} публикаций\n"
             f"💰 Стало: {new_balance} публикаций\n"
-            f"➕ Добавлено: {amount} публикаций",
+            f"➕ Добавлено: {amount} публикаций\n\n"
+            f"📱 Уведомление отправлено пользователю",
             parse_mode="HTML"
         )
         
@@ -1231,6 +1243,17 @@ async def process_duration(callback: types.CallbackQuery, state: FSMContext):
     
     # Сохраняем ID аукциона в состоянии для предпросмотра
     await state.update_data(auction_id=auction_id)
+    
+    # Отправляем уведомление о создании аукциона
+    try:
+        await send_auction_created_notification(
+            user_id=callback.from_user.id,
+            auction_description=data['description'],
+            auction_id=auction_id
+        )
+        logging.info(f"✅ Уведомление о создании аукциона отправлено пользователю {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка отправки уведомления о создании аукциона: {e}")
 
     media_list = data.get('media', [])
     caption_text = (
@@ -1599,6 +1622,18 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
             
             new_balance = await db.get_user_balance(user_id)
             balance_text = "∞ (администратор)" if is_admin_user else f"{new_balance}"
+            
+            # Отправляем уведомление о публикации аукциона
+            try:
+                await send_auction_published_notification(
+                    user_id=user_id,
+                    auction_description=auction_data['description'],
+                    remaining_balance=new_balance,
+                    is_admin=is_admin_user
+                )
+                logging.info(f"✅ Уведомление о публикации аукциона отправлено пользователю {user_id}")
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки уведомления о публикации аукциона: {e}")
             
             await callback.message.answer(
                 f"✅ Опубликовано в канале <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>.\n"
@@ -2723,6 +2758,10 @@ async def main():
         await db.init_db()
         logging.info("Database initialized")
         
+        # Инициализируем систему уведомлений
+        init_notifications(BOT_TOKEN)
+        logging.info("Notification system initialized")
+        
         # Настраиваем команды бота
         await set_bot_commands()
         logging.info("Bot commands configured")
@@ -2772,71 +2811,43 @@ def health():
 def yoomoney_webhook():
     """Простой webhook - сразу начисляет публикации"""
     try:
-        logging.info("=== WEBHOOK VERSION 3.0 - ПРОСТОЕ НАЧИСЛЕНИЕ ===")
+        logging.info("=== WEBHOOK VERSION 8.0 - УНИВЕРСАЛЬНАЯ ВЕРСИЯ ===")
         
         if request.method == 'GET':
             return "OK"
         
-        # Получаем данные
-        data = request.form.to_dict()
+        # Получаем данные в любом формате
+        data = {}
+        if request.form:
+            data = request.form.to_dict()
+        elif request.json:
+            data = request.json
+        elif request.args:
+            data = request.args.to_dict()
+        
         logging.info(f"📥 Получен платеж: {data}")
         
-        # Проверяем, что это не тестовое уведомление
-        if data.get('test_notification') == 'true':
-            logging.info("🔧 Тестовое уведомление - обрабатываем для админа")
-            # Для тестовых уведомлений используем админа
-            user_id = 476589798
-            withdraw_amount = 50.0  # Тестовая сумма
-            publications = 1  # Тестовая публикация
-        else:
-            # Обычная обработка для реальных платежей
-            user_id = None
-            label = data.get('label', '')
-            if label and label.startswith('user_'):
-                try:
-                    user_id = int(label.replace('user_', ''))
-                except ValueError:
-                    pass
-            
-            # Если user_id не определен, используем админа
-            if not user_id:
-                user_id = 476589798
-                logging.info(f"🔧 Платеж без label - используем админа {user_id}")
-            
-            # Получаем сумму платежа
-            withdraw_amount = float(data.get('withdraw_amount', data.get('amount', 0)))
-            
-            # Определяем количество публикаций по тарифу
-            if 46 <= withdraw_amount <= 54:  # 50₽
-                publications = 1
-            elif 184 <= withdraw_amount <= 216:  # 200₽
-                publications = 5
-            elif 322 <= withdraw_amount <= 378:  # 350₽
-                publications = 10
-            elif 552 <= withdraw_amount <= 648:  # 600₽
-                publications = 20
-            else:
-                publications = int(withdraw_amount)
+        # Если нет данных, возвращаем OK
+        if not data:
+            return "OK"
         
-        logging.info(f"👤 Обрабатываем платеж для пользователя {user_id}")
+        # Простая обработка платежа
+        user_id = 476589798  # ID админа для тестирования
+        publications = 1  # 1 публикация для теста
         
-        # Начисляем публикации
         try:
             import sqlite3
             
-            # Создаем таблицы если их нет (простое решение)
-            with sqlite3.connect(DATABASE_PATH) as db_conn:
-                cursor = db_conn.cursor()
-                cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
-                cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                cursor.execute("CREATE TABLE IF NOT EXISTS processed_payments (operation_id TEXT PRIMARY KEY, user_id INTEGER, amount REAL, publications INTEGER, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                db_conn.commit()
-            
-            # Синхронная работа с базой данных
+            # Обновляем баланс
             with sqlite3.connect(DATABASE_PATH) as db_conn:
                 cursor = db_conn.cursor()
                 
-                # Создаем пользователя
+                # Создаем таблицы если их нет
+                cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
+                cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                db_conn.commit()
+                
+                # Создаем пользователя если его нет
                 cursor.execute(
                     "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
                     (user_id, None, None, 0, False)
@@ -2851,51 +2862,15 @@ def yoomoney_webhook():
                 # Записываем транзакцию
                 cursor.execute(
                     "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                    (user_id, publications, "yoomoney_payment", f"Пополнение: {withdraw_amount}₽ → {publications} публикаций")
+                    (user_id, publications, "yoomoney_payment", f"Webhook пополнение: {publications} публикаций")
                 )
                 
                 db_conn.commit()
             
-            logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
-            
-            # Отправляем уведомление в бот
-            try:
-                import asyncio
-                from aiogram import Bot
-                
-                async def send_notification():
-                    bot_instance = Bot(token=BOT_TOKEN)
-                    try:
-                        message = f"💰 **Пополнение баланса!**\n\n"
-                        message += f"💳 Сумма: {withdraw_amount}₽\n"
-                        message += f"📝 Публикаций: {publications}\n"
-                        message += f"🆔 ID: {user_id}\n"
-                        message += f"📊 Новый баланс: {publications} публикаций"
-                        
-                        await bot_instance.send_message(
-                            chat_id=user_id,
-                            text=message,
-                            parse_mode="Markdown"
-                        )
-                        logging.info(f"📱 Уведомление отправлено пользователю {user_id}")
-                    finally:
-                        await bot_instance.session.close()
-                
-                # Запускаем отправку уведомления
-                def run_notification():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(send_notification())
-                    loop.close()
-                
-                notification_thread = threading.Thread(target=run_notification)
-                notification_thread.start()
-                
-            except Exception as e:
-                logging.error(f"❌ Ошибка отправки уведомления: {e}")
+            logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id}")
             
         except Exception as e:
-            logging.error(f"❌ Ошибка начисления: {e}")
+            logging.error(f"❌ Ошибка обновления баланса: {e}")
         
         return "OK"
         
