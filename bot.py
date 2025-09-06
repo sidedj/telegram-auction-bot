@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta
 import re
 import threading
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import sqlite3
 import hashlib
 import hmac
@@ -2274,65 +2274,6 @@ async def edit_buy_post_description(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 # --- Административные команды ---
-@dp.message(F.text.startswith("/add_balance"))
-async def add_balance_command(message: types.Message):
-    """Скрытая команда для добавления баланса пользователю"""
-    user_id = message.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await message.answer("❌ У вас нет прав администратора.")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) < 3:
-            await message.answer(
-                "❌ Неверный формат команды.\n"
-                "Используйте: <code>/add_balance [user_id] [amount] [description]</code>\n"
-                "Пример: <code>/add_balance 123456789 5 Бонус за активность</code>"
-            )
-            return
-        
-        target_user_id = int(parts[1])
-        amount = int(parts[2])
-        description = " ".join(parts[3:]) if len(parts) > 3 else "Административное начисление"
-        
-        logging.info(f"Admin {user_id} trying to add {amount} balance to user {target_user_id}")
-        
-        # Проверяем, существует ли пользователь
-        target_user = await db.get_or_create_user(target_user_id)
-        logging.info(f"Target user found: {target_user}")
-        
-        success = await db.update_user_balance(
-            user_id=target_user_id,
-            amount=amount,
-            transaction_type="admin_grant",
-            description=description
-        )
-        
-        logging.info(f"Balance update result: {success}")
-        
-        if success:
-            # Получаем актуальный баланс напрямую из базы данных
-            new_balance = await db.get_user_balance(target_user_id)
-            await message.answer(
-                f"✅ Баланс пользователя {target_user_id} обновлен!\n"
-                f"Добавлено: +{amount} публикаций\n"
-                f"Новый баланс: {new_balance} публикаций\n"
-                f"Описание: {description}"
-            )
-        else:
-            await message.answer("❌ Не удалось обновить баланс.")
-            
-    except ValueError:
-        await message.answer("❌ Неверный формат данных. ID и количество должны быть числами.")
-    except Exception as e:
-        logging.error(f"Error in add_balance command: {e}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        await message.answer(f"❌ Произошла ошибка при обновлении баланса.\n\nОшибка: {str(e)}")
-
 @dp.message(F.text.startswith("/remove_balance"))
 async def remove_balance_command(message: types.Message):
     """Скрытая команда для списания баланса у пользователя"""
@@ -2662,199 +2603,66 @@ async def main():
 # --- Flask webhook сервер для Railway ---
 app = Flask(__name__)
 
-def get_user_balance_webhook(user_id: int) -> int:
-    """Получает баланс пользователя для webhook"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            return result[0] if result else 0
-    except Exception as e:
-        logging.error(f"Ошибка при получении баланса пользователя {user_id}: {e}")
-        return 0
-
-def update_user_balance_webhook(user_id: int, new_balance: int):
-    """Обновляет баланс пользователя для webhook"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            # Проверяем, есть ли пользователь в базе
-            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-            if cursor.fetchone():
-                # Обновляем существующего пользователя
-                cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-            else:
-                # Создаем нового пользователя
-                cursor.execute("INSERT INTO users (user_id, balance, created_at) VALUES (?, ?, datetime('now'))", (user_id, new_balance))
-            conn.commit()
-            logging.info(f"Баланс пользователя {user_id} обновлен: {new_balance}")
-    except Exception as e:
-        logging.error(f"Ошибка при обновлении баланса пользователя {user_id}: {e}")
-
-def add_transaction_webhook(user_id: int, amount: int, transaction_type: str, description: str = None):
-    """Добавляет транзакцию в базу данных для webhook"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                (user_id, amount, transaction_type, description)
-            )
-            conn.commit()
-            logging.info(f"Транзакция добавлена: пользователь {user_id}, сумма {amount}, тип {transaction_type}, описание {description}")
-    except Exception as e:
-        logging.error(f"Ошибка при добавлении транзакции: {e}")
-
-def send_telegram_message_webhook(user_id: int, message: str):
-    """Отправляет сообщение пользователю в Telegram для webhook"""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        data = {
-            'chat_id': user_id,
-            'text': message,
-            'parse_mode': 'HTML'
-        }
-        import requests
-        response = requests.post(url, data=data, timeout=10)
-        if response.status_code == 200:
-            logging.info(f"Сообщение отправлено пользователю {user_id}")
-        else:
-            logging.error(f"Ошибка отправки сообщения: {response.status_code}")
-    except Exception as e:
-        logging.error(f"Ошибка отправки Telegram сообщения: {e}")
-
-def is_payment_processed(operation_id: str) -> bool:
-    """Проверяет, был ли уже обработан платеж с данным operation_id"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            # Создаем таблицу, если её нет
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS processed_payments (
-                    operation_id TEXT PRIMARY KEY,
-                    user_id INTEGER,
-                    amount REAL,
-                    publications INTEGER,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cursor.execute("SELECT 1 FROM processed_payments WHERE operation_id = ?", (operation_id,))
-            return cursor.fetchone() is not None
-    except Exception as e:
-        logging.error(f"Ошибка при проверке обработанных платежей: {e}")
-        return False
-
-def mark_payment_processed(operation_id: str, user_id: int, amount: float, publications: int):
-    """Отмечает платеж как обработанный"""
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            cursor = conn.cursor()
-            # Создаем таблицу, если её нет
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS processed_payments (
-                    operation_id TEXT PRIMARY KEY,
-                    user_id INTEGER,
-                    amount REAL,
-                    publications INTEGER,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            # Добавляем запись о платеже
-            cursor.execute(
-                "INSERT OR IGNORE INTO processed_payments (operation_id, user_id, amount, publications) VALUES (?, ?, ?, ?)",
-                (operation_id, user_id, amount, publications)
-            )
-            conn.commit()
-            logging.info(f"Платеж {operation_id} отмечен как обработанный")
-            return True
-    except Exception as e:
-        logging.error(f"Ошибка при отметке платежа как обработанного: {e}")
-        return False
-
 @app.route('/health')
 def health():
     """Проверка здоровья сервера"""
     return {"status": "ok", "message": "Auction bot is running"}
 
-@app.route('/yoomoney/test', methods=['GET'])
-def yoomoney_test():
-    """Тестовый endpoint для проверки работы webhook"""
-    return {
-        "status": "ok", 
-        "message": "YooMoney webhook is ready",
-        "webhook_url": YOOMONEY_NOTIFICATION_URL,
-        "receiver": YOOMONEY_RECEIVER
-    }
-
-@app.route('/test', methods=['GET', 'POST'])
-def test_endpoint():
-    """Простой тестовый endpoint для проверки входящих запросов"""
-    logging.info(f"Получен запрос: {request.method} {request.url}")
-    logging.info(f"Заголовки: {dict(request.headers)}")
-    logging.info(f"Данные: {request.form.to_dict() if request.form else request.get_json()}")
-    
-    return {
-        "status": "ok",
-        "method": request.method,
-        "headers": dict(request.headers),
-        "data": request.form.to_dict() if request.form else request.get_json()
-    }
 
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Webhook для обработки уведомлений от YooMoney"""
     try:
-        logger.info("=" * 50)
-        logger.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
-        logger.info(f"Метод: {request.method}")
-        logger.info(f"IP: {request.remote_addr}")
+        logging.info("=" * 50)
+        logging.info("ПОЛУЧЕН ЗАПРОС ОТ YOOMONEY")
+        logging.info(f"Метод: {request.method}")
+        logging.info(f"IP: {request.remote_addr}")
         
         if request.method == 'GET':
             return {"status": "ok", "message": "Webhook ready"}
         
         # Получаем данные
         data = request.form.to_dict()
-        logger.info(f"Данные: {data}")
+        logging.info(f"Данные: {data}")
         
         # Проверяем обязательные поля
         required_fields = ['notification_type', 'operation_id', 'amount', 'currency', 'datetime', 'sender', 'codepro', 'sha1_hash']
         for field in required_fields:
             if field not in data:
-                logger.error(f"Отсутствует обязательное поле: {field}")
+                logging.error(f"Отсутствует обязательное поле: {field}")
                 return "error", 400
         
         # Проверяем подлинность уведомления
         if not verify_yoomoney_signature(data, YOOMONEY_SECRET, data['sha1_hash']):
-            logger.error("❌ Неверная подпись уведомления!")
+            logging.error("❌ Неверная подпись уведомления!")
             return "error", 400
         
-        logger.info("✅ Подпись уведомления проверена")
+        logging.info("✅ Подпись уведомления проверена")
         
         # Обрабатываем только входящие платежи
         if data['notification_type'] != 'p2p-incoming':
-            logger.info(f"Пропускаем уведомление типа: {data['notification_type']}")
+            logging.info(f"Пропускаем уведомление типа: {data['notification_type']}")
             return "OK"
         
         # Проверяем, что это не тестовое уведомление
         if data.get('test_notification') == 'true':
-            logger.info("✅ Тестовое уведомление получено и проверено")
+            logging.info("✅ Тестовое уведомление получено и проверено")
             return "OK"
         
         # Обрабатываем реальный платеж
         success = asyncio.run(process_payment(data))
         
         if success:
-            logger.info("✅ Платеж успешно обработан")
+            logging.info("✅ Платеж успешно обработан")
             return "OK"
         else:
-            logger.error("❌ Ошибка при обработке платежа")
+            logging.error("❌ Ошибка при обработке платежа")
             return "error", 500
             
     except Exception as e:
-        logger.error(f"Ошибка в webhook: {e}")
+        logging.error(f"Ошибка в webhook: {e}")
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
         return "error", 500
 
 
