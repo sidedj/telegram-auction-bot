@@ -555,6 +555,87 @@ async def add_balance_command(message: types.Message):
         logging.error(f"❌ Общая ошибка в add_balance: {e}")
         await message.answer(f"❌ Ошибка при начислении баланса: {str(e)}")
 
+@dp.message(Command("add_balance_simple"))
+async def add_balance_simple_command(message: types.Message):
+    """Упрощенная команда для добавления баланса (только для админов)"""
+    try:
+        user_id = message.from_user.id
+        user = await db.get_or_create_user(user_id)
+        
+        if not user['is_admin']:
+            await message.answer("❌ У вас нет прав администратора.")
+            return
+        
+        # Парсим команду: /add_balance_simple <user_id> <amount>
+        parts = message.text.split()
+        if len(parts) != 3:
+            await message.answer("❌ Использование: /add_balance_simple <user_id> <количество_публикаций>")
+            return
+        
+        target_user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        if amount <= 0:
+            await message.answer("❌ Количество публикаций должно быть больше 0.")
+            return
+        
+        # Используем прямую работу с базой данных
+        import sqlite3
+        with sqlite3.connect(DATABASE_PATH) as db_conn:
+            cursor = db_conn.cursor()
+            
+            # Создаем пользователя, если его нет
+            cursor.execute(
+                "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                (target_user_id, None, None, 0, False)
+            )
+            
+            # Получаем текущий баланс
+            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (target_user_id,))
+            result = cursor.fetchone()
+            current_balance = result[0] if result else 0
+            new_balance = current_balance + amount
+            
+            # Обновляем баланс
+            cursor.execute(
+                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                (amount, target_user_id)
+            )
+            
+            # Записываем транзакцию
+            cursor.execute(
+                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                (target_user_id, amount, "admin_grant", f"Начислено администратором: {amount} публикаций")
+            )
+            
+            db_conn.commit()
+        
+        # Отправляем уведомление пользователю
+        try:
+            await bot.send_message(
+                target_user_id,
+                f"✅ <b>Ваш баланс пополнен!</b>\n\n"
+                f"💰 Зачислено: {amount} публикаций\n"
+                f"💳 Текущий баланс: {new_balance} публикаций\n\n"
+                f"📝 Причина: Начислено администратором",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logging.error(f"❌ Ошибка отправки уведомления: {e}")
+        
+        await message.answer(
+            f"✅ <b>Баланс обновлен!</b>\n\n"
+            f"👤 Пользователь: {target_user_id}\n"
+            f"💰 Было: {current_balance} публикаций\n"
+            f"💰 Стало: {new_balance} публикаций\n"
+            f"➕ Добавлено: {amount} публикаций",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in add_balance_simple: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
 @dp.message(Command("sync_payments"))
 async def sync_payments_command(message: types.Message):
     """Команда для синхронизации платежей с Railway (только для админов)"""
