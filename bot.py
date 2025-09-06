@@ -252,7 +252,12 @@ async def process_payment(data):
     """Простая обработка платежа"""
     try:
         operation_id = data.get('operation_id')
-        amount = float(data.get('amount', 0))
+        
+        # Используем withdraw_amount (сумма без комиссии) если есть, иначе amount
+        if 'withdraw_amount' in data and data['withdraw_amount']:
+            amount = float(data['withdraw_amount'])
+        else:
+            amount = float(data.get('amount', 0))
         
         # Конвертируем рубли в публикации (1 рубль = 1 публикация)
         publications = int(amount)
