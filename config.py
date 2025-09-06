@@ -23,7 +23,7 @@ def load_config():
     # Настройки ЮMoney
     YOOMONEY_RECEIVER = os.getenv("YOOMONEY_RECEIVER", "4100118987681575")
     YOOMONEY_SECRET = os.getenv("YOOMONEY_SECRET", "SaTKEuJWPVXJI/JFpXDCHZ4q")
-    YOOMONEY_NOTIFICATION_URL = os.getenv("YOOMONEY_NOTIFICATION_URL", "https://telegabot-production-3c68.up.railway.app/yoomoney")
+    YOOMONEY_NOTIFICATION_URL = os.getenv("YOOMONEY_NOTIFICATION_URL", "https://web-production-fa7dc.up.railway.app/yoomoney")
     
     # Тарифы для оплаты
     PAYMENT_PLANS = {
