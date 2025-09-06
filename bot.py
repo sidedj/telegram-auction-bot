@@ -2810,7 +2810,12 @@ def health():
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Простой webhook - сразу начисляет публикации"""
-    logging.info("=== WEBHOOK VERSION 11.0 - МАКСИМАЛЬНО ПРОСТАЯ ВЕРСИЯ ===")
+    return "OK"
+
+@app.route('/webhook', methods=['POST', 'GET'])
+def webhook_new():
+    """Новый webhook - сразу начисляет публикации"""
+    logging.info("=== WEBHOOK VERSION 12.0 - НОВЫЙ ENDPOINT ===")
     
     if request.method == 'GET':
         return "OK"
