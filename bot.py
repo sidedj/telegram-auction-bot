@@ -2759,10 +2759,25 @@ def yoomoney_webhook():
         
         # Получаем данные
         data = request.form.to_dict()
+        logging.info(f"Получены данные: {data}")
         
         # Если есть данные, обрабатываем
         if data and 'operation_id' in data and 'amount' in data:
-            asyncio.run(process_payment(data))
+            try:
+                # Запускаем обработку в новом потоке
+                import threading
+                def process_in_thread():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(process_payment(data))
+                    loop.close()
+                
+                thread = threading.Thread(target=process_in_thread)
+                thread.start()
+                thread.join(timeout=10)  # Ждем максимум 10 секунд
+                
+            except Exception as e:
+                logging.error(f"Ошибка при обработке платежа: {e}")
         
         return "OK"
         
