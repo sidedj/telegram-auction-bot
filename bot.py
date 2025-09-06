@@ -2707,7 +2707,8 @@ def yoomoney_webhook():
         logging.info(f"User-Agent: {request.headers.get('User-Agent', 'Не указан')}")
         logging.info(f"Заголовки: {dict(request.headers)}")
         logging.info(f"Данные формы: {request.form.to_dict()}")
-        logging.info(f"JSON данные: {request.get_json()}")
+        # JSON данные не нужны для YooMoney webhook
+        # logging.info(f"JSON данные: {request.get_json()}")
         logging.info("=" * 50)
         
         # Если это GET запрос, возвращаем статус
@@ -2780,6 +2781,10 @@ def yoomoney_webhook():
             publications = 10
             display_amount = 350
             logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как 10 публикаций")
+        elif is_test and amount >= 900.0 and amount <= 1000.0:  # Тестовые уведомления (~962₽)
+            publications = 20
+            display_amount = 600
+            logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как 20 публикаций")
         else:
             logging.warning(f"Неизвестная сумма: {amount} ₽ (с учетом комиссии ЮMoney)")
             return "error", 400
