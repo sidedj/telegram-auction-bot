@@ -2818,8 +2818,8 @@ def yoomoney_webhook():
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
-    """Новый webhook - сразу начисляет публикации"""
-    logging.info("=== WEBHOOK VERSION 13.0 - С УВЕДОМЛЕНИЯМИ ===")
+    """Новый webhook - обрабатывает все платежи"""
+    logging.info("=== WEBHOOK VERSION 14.0 - ВСЕ ПЛАТЕЖИ ===")
     
     if request.method == 'GET':
         return "OK"
@@ -2828,72 +2828,103 @@ def webhook_new():
     data = request.form.to_dict()
     logging.info(f"📥 Получен платеж: {data}")
     
-    # Простая обработка для тестовых уведомлений
-    if data.get('test_notification') == 'true':
-        logging.info("🔧 Тестовое уведомление - начисляем баланс")
+    # Обрабатываем все платежи (тестовые и реальные)
+    if data.get('notification_type') in ['card-incoming', 'p2p-incoming']:
+        logging.info("🔧 Обрабатываем платеж - начисляем баланс")
         
-        user_id = 476589798  # ID админа для тестирования
-        publications = 1
-        
-        try:
-            import sqlite3
-            with sqlite3.connect(DATABASE_PATH) as db_conn:
-                cursor = db_conn.cursor()
-                
-                # Создаем таблицы если их нет
-                cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
-                cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-                db_conn.commit()
-                
-                # Создаем пользователя если его нет
-                cursor.execute(
-                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, None, None, 0, False)
-                )
-                
-                # Начисляем публикации
-                cursor.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                    (publications, user_id)
-                )
-                
-                # Записываем транзакцию
-                cursor.execute(
-                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                    (user_id, publications, "yoomoney_payment", f"Тестовое пополнение: {publications} публикаций")
-                )
-                
-                db_conn.commit()
-            
-            logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id}")
-            
-            # Отправляем уведомление
+        # Определяем пользователя из label или используем админа для тестов
+        user_id = 476589798  # По умолчанию админ
+        if 'label' in data and data['label']:
             try:
-                import asyncio
-                from notifications import send_balance_notification
-                
-                # Получаем новый баланс
-                cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-                new_balance = cursor.fetchone()[0]
-                
-                # Отправляем уведомление асинхронно
-                async def send_notification():
-                    await send_balance_notification(
-                        user_id=user_id,
-                        amount=0,  # Рубли
-                        publications=publications,
-                        new_balance=new_balance
+                # Пытаемся извлечь user_id из label (формат: user_123456789)
+                if data['label'].startswith('user_'):
+                    user_id = int(data['label'].replace('user_', ''))
+            except:
+                pass
+        
+        # Определяем количество публикаций по сумме
+        amount = float(data.get('amount', '0'))
+        withdraw_amount = float(data.get('withdraw_amount', amount))
+        
+        # Тарифы: 50₽ = 1 публикация, 200₽ = 4 публикации, 350₽ = 7 публикаций
+        if withdraw_amount >= 350:
+            publications = 7
+        elif withdraw_amount >= 200:
+            publications = 4
+        elif withdraw_amount >= 50:
+            publications = 1
+        else:
+            publications = 0
+        
+        if publications > 0:
+            try:
+                import sqlite3
+                with sqlite3.connect(DATABASE_PATH) as db_conn:
+                    cursor = db_conn.cursor()
+                    
+                    # Создаем таблицы если их нет
+                    cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
+                    cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                    db_conn.commit()
+                    
+                    # Создаем пользователя если его нет
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                        (user_id, None, None, 0, False)
                     )
+                    
+                    # Начисляем публикации
+                    cursor.execute(
+                        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                        (publications, user_id)
+                    )
+                    
+                    # Записываем транзакцию
+                    operation_id = data.get('operation_id', 'unknown')
+                    description = f"Пополнение: {withdraw_amount}₽ → {publications} публикаций"
+                    if data.get('test_notification') == 'true':
+                        description = f"Тестовое пополнение: {withdraw_amount}₽ → {publications} публикаций"
+                    
+                    cursor.execute(
+                        "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                        (user_id, publications, "yoomoney_payment", description)
+                    )
+                    
+                    db_conn.commit()
                 
-                # Запускаем асинхронную функцию
-                asyncio.run(send_notification())
-                logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id} за {withdraw_amount}₽")
+                
+                # Отправляем уведомление
+                try:
+                    import asyncio
+                    from notifications import send_balance_notification
+                    
+                    # Получаем новый баланс
+                    with sqlite3.connect(DATABASE_PATH) as db_conn:
+                        cursor = db_conn.cursor()
+                        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+                        new_balance = cursor.fetchone()[0]
+                    
+                    # Отправляем уведомление асинхронно
+                    async def send_notification():
+                        await send_balance_notification(
+                            user_id=user_id,
+                            amount=withdraw_amount,  # Рубли
+                            publications=publications,
+                            new_balance=new_balance
+                        )
+                    
+                    # Запускаем асинхронную функцию
+                    asyncio.run(send_notification())
+                    logging.info(f"✅ Уведомление отправлено пользователю {user_id}")
+                    
+                except Exception as e:
+                    logging.error(f"❌ Ошибка отправки уведомления: {e}")
                 
             except Exception as e:
-                logging.error(f"❌ Ошибка отправки уведомления: {e}")
-            
-        except Exception as e:
-            logging.error(f"❌ Ошибка обновления баланса: {e}")
+                logging.error(f"❌ Ошибка обновления баланса: {e}")
+        else:
+            logging.warning(f"⚠️ Сумма {withdraw_amount}₽ слишком мала для начисления публикаций")
     
     # Возвращаем OK
     return "OK"
