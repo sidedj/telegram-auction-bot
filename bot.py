@@ -2698,7 +2698,7 @@ def yoomoney_webhook():
             return "error", 400
         
         # Проверяем подпись (если настроена) - ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ТЕСТИРОВАНИЯ
-        if YOOMONEY_SECRET and False:  # Временно отключаем проверку подписи
+        if False:  # Полностью отключаем проверку подписи для тестирования
             import hashlib
             sha1_hash = notification_data.get('sha1_hash', '')
             if sha1_hash:
