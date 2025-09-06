@@ -2810,6 +2810,62 @@ def health():
 @app.route('/yoomoney', methods=['POST', 'GET'])
 def yoomoney_webhook():
     """Простой webhook - сразу начисляет публикации"""
+    logging.info("=== WEBHOOK VERSION 9.0 - ДИАГНОСТИКА ===")
+    logging.info(f"Method: {request.method}")
+    logging.info(f"Headers: {dict(request.headers)}")
+    logging.info(f"Raw body: {request.data}")
+    logging.info(f"Form data: {request.form}")
+    logging.info(f"JSON data: {request.get_json()}")
+    
+    if request.method == 'GET':
+        return "OK"
+    
+    # Получаем данные
+    data = request.form.to_dict()
+    logging.info(f"Parsed data: {data}")
+    
+    # Простая обработка для тестовых уведомлений
+    if data.get('test_notification') == 'true':
+        logging.info("🔧 Тестовое уведомление - начисляем баланс")
+        
+        user_id = 476589798  # ID админа для тестирования
+        publications = 1
+        
+        try:
+            import sqlite3
+            with sqlite3.connect(DATABASE_PATH) as db_conn:
+                cursor = db_conn.cursor()
+                
+                # Создаем таблицы если их нет
+                cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, full_name TEXT, balance INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_admin BOOLEAN DEFAULT FALSE)")
+                cursor.execute("CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, amount INTEGER NOT NULL, transaction_type TEXT NOT NULL, description TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                db_conn.commit()
+                
+                # Создаем пользователя если его нет
+                cursor.execute(
+                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, None, None, 0, False)
+                )
+                
+                # Начисляем публикации
+                cursor.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (publications, user_id)
+                )
+                
+                # Записываем транзакцию
+                cursor.execute(
+                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                    (user_id, publications, "yoomoney_payment", f"Тестовое пополнение: {publications} публикаций")
+                )
+                
+                db_conn.commit()
+            
+            logging.info(f"✅ Начислено {publications} публикаций пользователю {user_id}")
+            
+        except Exception as e:
+            logging.error(f"❌ Ошибка обновления баланса: {e}")
+    
     return "OK"
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
