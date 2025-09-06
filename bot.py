@@ -2777,14 +2777,10 @@ def yoomoney_webhook():
         elif amount >= 590.0 and amount <= 610.0:  # 600₽ с комиссией (~598₽)
             publications = 20
             display_amount = 600
-        elif is_test and amount >= 400.0 and amount <= 450.0:  # Тестовые уведомления (~421₽)
-            publications = 10
-            display_amount = 350
-            logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как 10 публикаций")
-        elif is_test and amount >= 900.0 and amount <= 1000.0:  # Тестовые уведомления (~962₽)
-            publications = 20
-            display_amount = 600
-            logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как 20 публикаций")
+        elif is_test:  # Любые тестовые уведомления
+            publications = 5  # Фиксированное количество для тестов
+            display_amount = 200
+            logging.info(f"Обрабатываем тестовое уведомление с суммой {amount} как {publications} публикаций")
         else:
             logging.warning(f"Неизвестная сумма: {amount} ₽ (с учетом комиссии ЮMoney)")
             return "error", 400
