@@ -3112,7 +3112,7 @@ _webhook_loop = None
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
     """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
-    global _webhook_initialized, _webhook_loop
+    global _webhook_initialized
     
     logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
     
@@ -3126,15 +3126,16 @@ def webhook_new():
             import threading
             
             def run_async_init():
-                global _webhook_loop
-                _webhook_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(_webhook_loop)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 try:
-                    _webhook_loop.run_until_complete(init_webhook_bot())
+                    loop.run_until_complete(init_webhook_bot())
                 except Exception as e:
                     logging.error(f"❌ Ошибка инициализации: {e}")
                     import traceback
                     logging.error(f"❌ Traceback: {traceback.format_exc()}")
+                finally:
+                    loop.close()
             
             # Запускаем инициализацию в отдельном потоке
             init_thread = threading.Thread(target=run_async_init)
@@ -3178,23 +3179,26 @@ def webhook_new():
                 
             logging.info(f"📱 Получено сообщение от Telegram: {data}")
             
-            # Обрабатываем сообщение в том же event loop
-            if _webhook_loop and not _webhook_loop.is_closed():
-                import asyncio
-                import threading
-                
-                def run_async_process():
-                    try:
-                        _webhook_loop.run_until_complete(process_telegram_update(data))
-                    except Exception as e:
-                        logging.error(f"❌ Ошибка обработки: {e}")
-                        import traceback
-                        logging.error(f"❌ Traceback: {traceback.format_exc()}")
-                
-                # Запускаем обработку в отдельном потоке
-                process_thread = threading.Thread(target=run_async_process)
-                process_thread.start()
-                process_thread.join()
+            # Обрабатываем сообщение в новом event loop
+            import asyncio
+            import threading
+            
+            def run_async_process():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(process_telegram_update(data))
+                except Exception as e:
+                    logging.error(f"❌ Ошибка обработки: {e}")
+                    import traceback
+                    logging.error(f"❌ Traceback: {traceback.format_exc()}")
+                finally:
+                    loop.close()
+            
+            # Запускаем обработку в отдельном потоке
+            process_thread = threading.Thread(target=run_async_process)
+            process_thread.start()
+            process_thread.join()
             
             return "OK"
         except Exception as e:
@@ -3327,6 +3331,7 @@ async def process_telegram_update(update_data):
     """Обрабатывает обновления от Telegram"""
     try:
         from aiogram.types import Update
+        from aiogram import Bot
         import asyncio
         
         logging.info(f"📱 Обрабатываем обновление: {update_data}")
@@ -3334,9 +3339,15 @@ async def process_telegram_update(update_data):
         # Создаем объект Update из данных
         update = Update(**update_data)
         
-        # Обрабатываем обновление через диспетчер
-        # Используем правильный метод для aiogram 3.x
-        await dp.feed_update(bot, update)
+        # Создаем новый экземпляр бота для этого event loop
+        temp_bot = Bot(token=BOT_TOKEN)
+        
+        # Обрабатываем обновление через глобальный диспетчер
+        await dp.feed_update(temp_bot, update)
+        
+        # Закрываем сессию бота
+        await temp_bot.session.close()
+        
         logging.info("✅ Обновление обработано успешно")
         
     except Exception as e:
