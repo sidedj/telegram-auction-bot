@@ -553,6 +553,61 @@ class Database:
             result = await cursor.fetchone()
             return result[0] if result else 0
 
+    async def update_user_balance_transactional(self, user_id: int, amount: int, transaction_type: str, description: str = None, auction_id: int = None) -> bool:
+        """Обновить баланс пользователя с транзакционной безопасностью"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Начинаем транзакцию
+                await db.execute("BEGIN TRANSACTION")
+                
+                try:
+                    # Проверяем, существует ли пользователь
+                    cursor = await db.execute("SELECT user_id, balance FROM users WHERE user_id = ?", (user_id,))
+                    user_data = await cursor.fetchone()
+                    
+                    if not user_data:
+                        # Создаем пользователя, если его нет
+                        await db.execute(
+                            "INSERT INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                            (user_id, None, None, 0, False)
+                        )
+                        current_balance = 0
+                    else:
+                        current_balance = user_data[1]
+                    
+                    # Проверяем, достаточно ли средств для списания
+                    if amount < 0 and current_balance < abs(amount):
+                        await db.execute("ROLLBACK")
+                        logging.warning(f"Недостаточно средств для списания. Текущий баланс: {current_balance}, требуется: {abs(amount)}")
+                        return False
+                    
+                    # Обновляем баланс
+                    await db.execute(
+                        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                        (amount, user_id)
+                    )
+                    
+                    # Записываем транзакцию
+                    await db.execute(
+                        "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                        (user_id, amount, transaction_type, description)
+                    )
+                    
+                    # Подтверждаем транзакцию
+                    await db.execute("COMMIT")
+                    logging.info(f"Успешно обновлен баланс пользователя {user_id} на {amount}. Новый баланс: {current_balance + amount}")
+                    return True
+                    
+                except Exception as e:
+                    # Откатываем транзакцию в случае ошибки
+                    await db.execute("ROLLBACK")
+                    logging.error(f"Ошибка в транзакции обновления баланса: {e}")
+                    raise
+                    
+        except Exception as e:
+            logging.error(f"Ошибка при обновлении баланса пользователя: {e}")
+            return False
+
     async def has_recent_payment(self, user_id: int, minutes: int = 10) -> bool:
         """Проверить, был ли недавний платеж пользователя"""
         async with aiosqlite.connect(self.db_path) as db:
