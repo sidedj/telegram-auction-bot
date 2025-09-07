@@ -638,6 +638,17 @@ async def simple_test_command(message: types.Message):
     try:
         logging.info(f"🧪 Простой тест публикации в канал {CHANNEL_USERNAME}...")
         
+        # Проверяем, что event loop активен
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_closed():
+                await message.answer("❌ Event loop закрыт. Попробуйте позже.")
+                return
+        except RuntimeError:
+            await message.answer("❌ Нет активного event loop. Попробуйте позже.")
+            return
+        
         # Простое сообщение без кнопок
         test_message = await bot.send_message(
             chat_id=CHANNEL_USERNAME, 
@@ -663,6 +674,38 @@ async def simple_test_command(message: types.Message):
     except Exception as e:
         logging.error(f"Error in simple test: {e}")
         await message.answer(f"❌ Ошибка при простом тесте: {str(e)}")
+
+@dp.message(Command("test_direct"))
+async def test_direct_command(message: types.Message):
+    """Прямой тест публикации без проверок (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🧪 Прямой тест публикации в канал {CHANNEL_USERNAME}...")
+        
+        # Прямая отправка без проверок
+        test_message = await bot.send_message(
+            chat_id=CHANNEL_USERNAME, 
+            text="🧪 Прямой тест - бот работает!"
+        )
+        
+        await message.answer(
+            f"✅ <b>Прямой тест успешен!</b>\n\n"
+            f"📝 Сообщение отправлено в канал\n"
+            f"🆔 ID: <code>{test_message.message_id}</code>\n"
+            f"📅 Время: {test_message.date}\n\n"
+            f"💡 Публикация работает!",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in direct test: {e}")
+        await message.answer(f"❌ Ошибка при прямом тесте: {str(e)}")
 
 @dp.message(Command("check_admin"))
 async def check_admin_command(message: types.Message):
@@ -2135,7 +2178,11 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
         
         if not media_items:
             logging.info("📝 Публикуем текстовое сообщение в канал")
-            return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+            try:
+                return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+            except Exception as e:
+                logging.error(f"❌ Ошибка отправки текстового сообщения: {e}")
+                raise Exception(f"Не удалось отправить сообщение в канал: {str(e)}")
     except Exception as e:
         logging.error(f"❌ Ошибка публикации в канал: {e}")
         raise
