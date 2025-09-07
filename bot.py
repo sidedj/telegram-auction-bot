@@ -2393,6 +2393,21 @@ async def handle_buyout(callback: types.CallbackQuery):
         if not auction:
             await callback.answer("Аукцион не найден.", show_alert=True)
             return
+
+        # Проверяем, не истек ли аукцион по времени
+        from datetime import datetime
+        end_time = auction['end_time']
+        if isinstance(end_time, str):
+            try:
+                end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            except ValueError:
+                end_time = datetime.now()
+        
+        if datetime.now() >= end_time:
+            # Аукцион истек по времени, обновляем статус
+            await db.update_auction_status(auction['id'], 'expired')
+            await callback.answer("Аукцион истек по времени.", show_alert=True)
+            return
             
         if auction['status'] != 'active':
             await callback.answer("Аукцион уже завершен.", show_alert=True)
@@ -2568,6 +2583,7 @@ async def handle_bid(callback: types.CallbackQuery):
     """Обработка обычных ставок"""
     try:
         bid_amount = int(callback.data.split(":")[1])
+        logging.info(f"💰 Обработка ставки {bid_amount} от пользователя {callback.from_user.id}")
 
         # Проверяем подписку пользователя на канал
         is_subscribed = await check_user_subscription(callback.from_user.id)
@@ -2587,6 +2603,21 @@ async def handle_bid(callback: types.CallbackQuery):
         
         if not auction:
             await callback.answer("Аукцион не найден.", show_alert=True)
+            return
+
+        # Проверяем, не истек ли аукцион по времени
+        from datetime import datetime
+        end_time = auction['end_time']
+        if isinstance(end_time, str):
+            try:
+                end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+            except ValueError:
+                end_time = datetime.now()
+        
+        if datetime.now() >= end_time:
+            # Аукцион истек по времени, обновляем статус
+            await db.update_auction_status(auction['id'], 'expired')
+            await callback.answer("Аукцион истек по времени.", show_alert=True)
             return
 
         if auction['status'] != 'active':
@@ -2651,9 +2682,12 @@ async def handle_bid(callback: types.CallbackQuery):
             )
         
         await callback.answer(f"Ваша ставка {new_price} ₽ принята!")
+        logging.info(f"✅ Ставка {new_price} ₽ успешно обработана для аукциона #{auction['id']}")
         
     except Exception as e:
-        logging.error(f"Error processing bid: {e}")
+        logging.error(f"❌ Ошибка обработки ставки: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
         await callback.answer("Ошибка при обработке ставки. Попробуйте позже.", show_alert=True)
 
 # --- Обработчик истории ставок (только для продавца) ---
