@@ -2080,29 +2080,21 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
 
         try:
             # Публикуем в канал
-            try:
-                posted_message = await _publish_auction_to_channel(auction_data, text, bidding_keyboard)
-                
-                if posted_message:
-                    # Сохраняем информацию о сообщении в канале
-                    await db.set_auction_channel_info(
-                        auction_data['id'],
-                        posted_message.chat.id,
-                        posted_message.message_id
-                    )
-                    logging.info(f"✅ Аукцион #{auction_data['id']} успешно опубликован в канале")
-                else:
-                    # Если публикация не удалась, возвращаем баланс
-                    if not is_admin_user:
-                        await db.rollback_auction_balance(auction_data['id'], user_id)
-                    raise Exception("Не удалось опубликовать аукцион в канале")
-                    
-            except Exception as publish_error:
-                logging.error(f"❌ Ошибка при публикации аукциона #{auction_data['id']}: {publish_error}")
-                # Возвращаем баланс в случае ошибки публикации
+            posted_message = await _publish_auction_to_channel(auction_data, text, bidding_keyboard)
+            
+            if posted_message:
+                # Сохраняем информацию о сообщении в канале
+                await db.set_auction_channel_info(
+                    auction_data['id'],
+                    posted_message.chat.id,
+                    posted_message.message_id
+                )
+                logging.info(f"✅ Аукцион #{auction_data['id']} успешно опубликован в канале")
+            else:
+                # Если публикация не удалась, возвращаем баланс
                 if not is_admin_user:
                     await db.rollback_auction_balance(auction_data['id'], user_id)
-                raise publish_error
+                raise Exception("Не удалось опубликовать аукцион в канале")
             
             new_balance = await db.get_user_balance(user_id)
             balance_text = "∞ (администратор)" if is_admin_user else f"{new_balance}"
@@ -2170,22 +2162,11 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
     """Публикует аукцион в канал"""
     logging.info(f"🚀 Начинаем публикацию аукциона #{auction_data.get('id')} в канал {CHANNEL_USERNAME}")
     
-    try:
-        media_items = auction_data.get('media', [])
-        
-        # Пытаемся опубликовать сообщение напрямую без проверки прав
-        logging.info("📝 Публикуем сообщение в канал без проверки прав...")
-        
-        if not media_items:
-            logging.info("📝 Публикуем текстовое сообщение в канал")
-            try:
-                return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
-            except Exception as e:
-                logging.error(f"❌ Ошибка отправки текстового сообщения: {e}")
-                raise Exception(f"Не удалось отправить сообщение в канал: {str(e)}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка публикации в канал: {e}")
-        raise
+    media_items = auction_data.get('media', [])
+    
+    if not media_items:
+        logging.info("📝 Публикуем текстовое сообщение в канал")
+        return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
     
     # Если одно медиа — публикуем только его с кнопками
     if len(media_items) == 1:
