@@ -3340,7 +3340,10 @@ async def process_telegram_update(update_data):
         update = Update(**update_data)
         
         # Создаем новый экземпляр бота для этого event loop
-        temp_bot = Bot(token=BOT_TOKEN)
+        temp_bot = Bot(token=BOT_TOKEN, **DEFAULT_BOT_KWARGS)
+        
+        # Инициализируем базу данных для этого event loop
+        await db.init_db()
         
         # Обрабатываем обновление через глобальный диспетчер
         await dp.feed_update(temp_bot, update)
