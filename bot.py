@@ -1859,10 +1859,23 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
 
 async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -> types.Message:
     """Публикует аукцион в канал"""
-    media_items = auction_data.get('media', [])
-    
-    if not media_items:
-        return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+    try:
+        # Проверяем права бота в канале
+        try:
+            chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=bot.id)
+            if chat_member.status not in ['administrator', 'creator']:
+                raise Exception(f"Бот не является администратором канала. Статус: {chat_member.status}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка проверки прав бота в канале: {e}")
+            raise Exception("Бот не добавлен в канал или не имеет прав администратора")
+        
+        media_items = auction_data.get('media', [])
+        
+        if not media_items:
+            return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+    except Exception as e:
+        logging.error(f"❌ Ошибка публикации в канал: {e}")
+        raise
     
     # Если одно медиа — публикуем только его с кнопками
     if len(media_items) == 1:
