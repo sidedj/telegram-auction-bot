@@ -3987,7 +3987,10 @@ async def init_webhook_bot():
                 if railway_url:
                     webhook_url = f"https://{railway_url}/webhook"
                 else:
-                    logging.error("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                    # Для локального тестирования используем ngrok или пропускаем webhook
+                    logging.warning("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                    logging.warning("Webhook не настроен - кнопки в постах могут не работать")
+                    _webhook_set = True
                     return
             
             try:
@@ -4101,7 +4104,12 @@ async def main_webhook():
             if railway_url:
                 webhook_url = f"https://{railway_url}/webhook"
             else:
-                logging.error("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                # Для локального тестирования пропускаем webhook
+                logging.warning("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                logging.warning("Webhook не настроен - кнопки в постах могут не работать")
+                # Продолжаем работу без webhook
+                while True:
+                    await asyncio.sleep(1)
                 return
             
         # Удаляем старый webhook и устанавливаем новый
