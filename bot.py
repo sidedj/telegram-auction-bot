@@ -3107,11 +3107,12 @@ def yoomoney_webhook():
 
 # Флаг инициализации
 _webhook_initialized = False
+_webhook_loop = None
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
     """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
-    global _webhook_initialized
+    global _webhook_initialized, _webhook_loop
     
     logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
     
@@ -3122,14 +3123,27 @@ def webhook_new():
     if not _webhook_initialized:
         try:
             import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(init_webhook_bot())
-                _webhook_initialized = True
-                logging.info("✅ Webhook бот инициализирован")
-            finally:
-                loop.close()
+            import threading
+            
+            def run_async_init():
+                global _webhook_loop
+                _webhook_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(_webhook_loop)
+                try:
+                    _webhook_loop.run_until_complete(init_webhook_bot())
+                except Exception as e:
+                    logging.error(f"❌ Ошибка инициализации: {e}")
+                    import traceback
+                    logging.error(f"❌ Traceback: {traceback.format_exc()}")
+            
+            # Запускаем инициализацию в отдельном потоке
+            init_thread = threading.Thread(target=run_async_init)
+            init_thread.start()
+            init_thread.join()
+            
+            _webhook_initialized = True
+            logging.info("✅ Webhook бот инициализирован")
+            
         except Exception as e:
             logging.error(f"❌ Ошибка инициализации: {e}")
             import traceback
@@ -3141,17 +3155,46 @@ def webhook_new():
     if 'application/json' in content_type:
         # Это сообщение от Telegram
         try:
-            import asyncio
-            data = request.get_json()
+            # Получаем сырые данные
+            raw_data = request.get_data()
+            logging.info(f"📱 Получены сырые данные: {raw_data[:200]}...")
+            
+            if not raw_data:
+                logging.warning("⚠️ Получены пустые данные")
+                return "OK"
+            
+            # Парсим JSON вручную для лучшей обработки ошибок
+            import json
+            try:
+                data = json.loads(raw_data.decode('utf-8'))
+            except json.JSONDecodeError as e:
+                logging.error(f"❌ Ошибка парсинга JSON: {e}")
+                logging.error(f"❌ Сырые данные: {raw_data}")
+                return "OK"
+            
+            if not data:
+                logging.warning("⚠️ Получен пустой JSON")
+                return "OK"
+                
             logging.info(f"📱 Получено сообщение от Telegram: {data}")
             
-            # Обрабатываем сообщение синхронно
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(process_telegram_update(data))
-            finally:
-                loop.close()
+            # Обрабатываем сообщение в том же event loop
+            if _webhook_loop and not _webhook_loop.is_closed():
+                import asyncio
+                import threading
+                
+                def run_async_process():
+                    try:
+                        _webhook_loop.run_until_complete(process_telegram_update(data))
+                    except Exception as e:
+                        logging.error(f"❌ Ошибка обработки: {e}")
+                        import traceback
+                        logging.error(f"❌ Traceback: {traceback.format_exc()}")
+                
+                # Запускаем обработку в отдельном потоке
+                process_thread = threading.Thread(target=run_async_process)
+                process_thread.start()
+                process_thread.join()
             
             return "OK"
         except Exception as e:
@@ -3291,7 +3334,8 @@ async def process_telegram_update(update_data):
         # Создаем объект Update из данных
         update = Update(**update_data)
         
-        # Обрабатываем обновление через диспетчер (правильный метод для aiogram 3.x)
+        # Обрабатываем обновление через диспетчер
+        # Используем правильный метод для aiogram 3.x
         await dp.feed_update(bot, update)
         logging.info("✅ Обновление обработано успешно")
         
