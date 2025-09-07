@@ -3137,11 +3137,19 @@ def webhook_new():
             data = request.get_json()
             logging.info(f"📱 Получено сообщение от Telegram: {data}")
             
-            # Обрабатываем сообщение через aiogram
-            asyncio.create_task(process_telegram_update(data))
+            # Обрабатываем сообщение синхронно
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(process_telegram_update(data))
+            finally:
+                loop.close()
+            
             return "OK"
         except Exception as e:
             logging.error(f"❌ Ошибка обработки сообщения Telegram: {e}")
+            import traceback
+            logging.error(f"❌ Traceback: {traceback.format_exc()}")
             return "ERROR", 500
     
     else:
@@ -3270,14 +3278,19 @@ async def process_telegram_update(update_data):
         from aiogram.types import Update
         import asyncio
         
+        logging.info(f"📱 Обрабатываем обновление: {update_data}")
+        
         # Создаем объект Update из данных
         update = Update(**update_data)
         
         # Обрабатываем обновление через диспетчер
         await dp.process_update(update)
+        logging.info("✅ Обновление обработано успешно")
         
     except Exception as e:
         logging.error(f"❌ Ошибка обработки обновления Telegram: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
 # Инициализация для webhook режима
 async def init_webhook_bot():
@@ -3301,10 +3314,15 @@ async def init_webhook_bot():
         await auction_persistence.start()
         logging.info("Auction persistence system started")
         
+        # В webhook режиме диспетчер не запускается, только инициализируется
+        logging.info("Dispatcher ready for webhook mode")
+        
         logging.info("✅ Webhook бот инициализирован")
         
     except Exception as e:
         logging.error(f"❌ Ошибка инициализации webhook бота: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
 # Инициализация будет запущена при первом запросе к webhook
 
