@@ -37,7 +37,7 @@ def load_config():
     YOOMONEY_BASE_URL = "https://yoomoney.ru/quickpay/confirm.xml"
     
     # Username канала
-    CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "-1002369805353")  # ID канала "Барахолка - СПБ"
+    CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@baraxolkavspb")  # Username канала "Барахолка - СПБ"
     
     # Username канала для ссылок (если есть)
     CHANNEL_USERNAME_LINK = os.getenv("CHANNEL_USERNAME_LINK", "baraxolkavspb")  # Username канала для ссылок

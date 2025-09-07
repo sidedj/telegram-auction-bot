@@ -475,6 +475,195 @@ async def update_admin_command(message: types.Message):
         logging.error(f"Error updating admin status: {e}")
         await message.answer("❌ Ошибка при обновлении админских прав.")
 
+@dp.message(Command("test_channel"))
+async def test_channel_command(message: types.Message):
+    """Команда для тестирования прав бота в канале (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🧪 Тестируем права бота в канале {CHANNEL_USERNAME}...")
+        
+        # Проверяем права бота в канале
+        chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=bot.id)
+        
+        test_result = f"🧪 <b>Тест прав бота в канале:</b>\n\n"
+        test_result += f"🆔 <b>ID канала:</b> <code>{CHANNEL_USERNAME}</code>\n"
+        test_result += f"👤 <b>Статус бота:</b> {chat_member.status}\n"
+        
+        if chat_member.status not in ['administrator', 'creator']:
+            test_result += f"❌ <b>Проблема:</b> Бот не является администратором канала\n"
+            test_result += f"💡 <b>Решение:</b> Добавьте бота в канал как администратора"
+        else:
+            test_result += f"✅ <b>Статус:</b> Бот является администратором\n"
+            
+            if chat_member.status == 'administrator':
+                if hasattr(chat_member, 'privileges') and chat_member.privileges:
+                    test_result += f"\n📋 <b>Права бота:</b>\n"
+                    test_result += f"• Публикация постов: {'✅' if chat_member.privileges.can_post_messages else '❌'}\n"
+                    test_result += f"• Редактирование постов: {'✅' if chat_member.privileges.can_edit_messages else '❌'}\n"
+                    test_result += f"• Удаление постов: {'✅' if chat_member.privileges.can_delete_messages else '❌'}\n"
+                    
+                    if not chat_member.privileges.can_post_messages:
+                        test_result += f"\n❌ <b>Проблема:</b> У бота нет прав на публикацию постов\n"
+                        test_result += f"💡 <b>Решение:</b> Дайте боту права 'Публикация постов' в настройках администратора"
+                    else:
+                        test_result += f"\n✅ <b>Результат:</b> Все права настроены корректно!"
+                        
+                        # Пробуем отправить тестовое сообщение
+                        try:
+                            test_message = await bot.send_message(
+                                chat_id=CHANNEL_USERNAME, 
+                                text="🧪 Тестовое сообщение - права бота проверены успешно! ✅"
+                            )
+                            test_result += f"\n🎉 <b>Тест публикации:</b> Успешно! (ID: {test_message.message_id})"
+                            
+                            # Удаляем тестовое сообщение
+                            await bot.delete_message(chat_id=CHANNEL_USERNAME, message_id=test_message.message_id)
+                            test_result += f"\n🗑 Тестовое сообщение удалено"
+                            
+                        except Exception as e:
+                            test_result += f"\n❌ <b>Ошибка публикации:</b> {str(e)}"
+                else:
+                    test_result += f"\n⚠️ Не удалось получить информацию о правах бота"
+            else:
+                test_result += f"\n👑 Бот является создателем канала - все права доступны!"
+        
+        await message.answer(test_result, parse_mode="HTML")
+        
+    except Exception as e:
+        logging.error(f"Error testing channel permissions: {e}")
+        await message.answer(f"❌ Ошибка при тестировании канала: {str(e)}")
+
+@dp.message(Command("test_publish"))
+async def test_publish_command(message: types.Message):
+    """Команда для тестирования публикации в канал без проверки прав (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🧪 Тестируем прямую публикацию в канал {CHANNEL_USERNAME}...")
+        
+        # Пробуем отправить тестовое сообщение напрямую
+        test_message = await bot.send_message(
+            chat_id=CHANNEL_USERNAME, 
+            text="🧪 Тест прямой публикации - бот работает! ✅\n\nЭто сообщение отправлено без проверки прав."
+        )
+        
+        await message.answer(
+            f"✅ <b>Тест публикации успешен!</b>\n\n"
+            f"📝 Сообщение отправлено в канал\n"
+            f"🆔 ID сообщения: <code>{test_message.message_id}</code>\n"
+            f"📅 Время: {test_message.date}\n\n"
+            f"💡 Проблема была в проверке прав, а не в самой публикации.",
+            parse_mode="HTML"
+        )
+        
+        # Удаляем тестовое сообщение через 5 секунд
+        import asyncio
+        await asyncio.sleep(5)
+        try:
+            await bot.delete_message(chat_id=CHANNEL_USERNAME, message_id=test_message.message_id)
+            await message.answer("🗑 Тестовое сообщение удалено")
+        except Exception as e:
+            logging.warning(f"Не удалось удалить тестовое сообщение: {e}")
+        
+    except Exception as e:
+        logging.error(f"Error testing direct publish: {e}")
+        await message.answer(f"❌ Ошибка при тестировании публикации: {str(e)}")
+
+@dp.message(Command("get_channel_info"))
+async def get_channel_info_command(message: types.Message):
+    """Команда для получения информации о канале (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🔍 Получаем информацию о канале {CHANNEL_USERNAME}...")
+        
+        # Получаем информацию о канале
+        chat_info = await bot.get_chat(chat_id=CHANNEL_USERNAME)
+        
+        info_text = f"📋 <b>Информация о канале:</b>\n\n"
+        info_text += f"🆔 <b>ID канала:</b> <code>{chat_info.id}</code>\n"
+        info_text += f"📝 <b>Username:</b> @{chat_info.username}\n"
+        info_text += f"📛 <b>Название:</b> {chat_info.title}\n"
+        info_text += f"📊 <b>Тип:</b> {chat_info.type}\n"
+        info_text += f"👥 <b>Участников:</b> {chat_info.member_count if hasattr(chat_info, 'member_count') else 'Неизвестно'}\n"
+        info_text += f"📝 <b>Описание:</b> {chat_info.description if hasattr(chat_info, 'description') and chat_info.description else 'Нет описания'}\n\n"
+        
+        # Проверяем права бота
+        try:
+            chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=bot.id)
+            info_text += f"🤖 <b>Статус бота:</b> {chat_member.status}\n"
+            
+            if chat_member.status == 'administrator' and hasattr(chat_member, 'privileges') and chat_member.privileges:
+                info_text += f"🔑 <b>Права бота:</b>\n"
+                info_text += f"• Публикация постов: {'✅' if chat_member.privileges.can_post_messages else '❌'}\n"
+                info_text += f"• Редактирование постов: {'✅' if chat_member.privileges.can_edit_messages else '❌'}\n"
+                info_text += f"• Удаление постов: {'✅' if chat_member.privileges.can_delete_messages else '❌'}\n"
+        except Exception as e:
+            info_text += f"❌ <b>Ошибка проверки прав:</b> {str(e)}\n"
+        
+        info_text += f"\n💡 <b>Рекомендация:</b> Используйте ID канала <code>{chat_info.id}</code> в конфигурации для более надежной работы."
+        
+        await message.answer(info_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logging.error(f"Error getting channel info: {e}")
+        await message.answer(f"❌ Ошибка при получении информации о канале: {str(e)}")
+
+@dp.message(Command("simple_test"))
+async def simple_test_command(message: types.Message):
+    """Простая команда для тестирования публикации (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🧪 Простой тест публикации в канал {CHANNEL_USERNAME}...")
+        
+        # Простое сообщение без кнопок
+        test_message = await bot.send_message(
+            chat_id=CHANNEL_USERNAME, 
+            text="🧪 Простой тест - бот работает!"
+        )
+        
+        await message.answer(
+            f"✅ <b>Простой тест успешен!</b>\n\n"
+            f"📝 Сообщение отправлено в канал\n"
+            f"🆔 ID: <code>{test_message.message_id}</code>\n"
+            f"📅 Время: {test_message.date}\n\n"
+            f"💡 Бот может публиковать в канал!",
+            parse_mode="HTML"
+        )
+        
+        # Удаляем тестовое сообщение
+        try:
+            await bot.delete_message(chat_id=CHANNEL_USERNAME, message_id=test_message.message_id)
+            await message.answer("🗑 Тестовое сообщение удалено")
+        except Exception as e:
+            logging.warning(f"Не удалось удалить тестовое сообщение: {e}")
+        
+    except Exception as e:
+        logging.error(f"Error in simple test: {e}")
+        await message.answer(f"❌ Ошибка при простом тесте: {str(e)}")
+
 @dp.message(Command("check_admin"))
 async def check_admin_command(message: types.Message):
     """Команда для проверки админского статуса"""
@@ -1761,7 +1950,18 @@ async def publish_buy_post(callback: types.CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logging.error(f"Failed to publish buy post: {e}")
-        await callback.answer("Не удалось опубликовать в канале. Проверьте, что бот добавлен в канал и имеет права администратора.", show_alert=True)
+        # Формируем более информативное сообщение об ошибке
+        error_str = str(e).lower() if 'e' in locals() else ""
+        if "не добавлен в канал" in error_str or "не имеет прав администратора" in error_str:
+            error_text = "Бот не добавлен в канал как администратор или у него нет прав на публикацию постов."
+        elif "публикацию постов" in error_str:
+            error_text = "У бота нет прав на публикацию постов в канале. Проверьте настройки администрирования."
+        elif "forbidden" in error_str or "chat not found" in error_str:
+            error_text = "Канал не найден или бот заблокирован. Проверьте корректность ID канала."
+        else:
+            error_text = "Не удалось опубликовать в канале. Проверьте, что бот добавлен в канал и имеет права администратора."
+        
+        await callback.answer(error_text, show_alert=True)
 
 @dp.callback_query(F.data == "cancel_buy_post")
 async def cancel_buy_post(callback: types.CallbackQuery, state: FSMContext):
@@ -1791,15 +1991,31 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-    if is_admin_user or user['balance'] > 0:
-        if not is_admin_user:
-            # Списываем 1 публикацию
-            await db.update_user_balance(
-                user_id=user_id,
-                amount=-1,
-                transaction_type="auction_created",
-                description="Создание аукциона"
-            )
+    # Проверяем, не обрабатывается ли уже публикация для этого пользователя
+    if hasattr(check_balance_before_publish, '_processing_users'):
+        if user_id in check_balance_before_publish._processing_users:
+            await callback.answer("⏳ Публикация уже обрабатывается, пожалуйста, подождите...", show_alert=True)
+            return
+    else:
+        check_balance_before_publish._processing_users = set()
+    
+    # Добавляем пользователя в список обрабатываемых
+    check_balance_before_publish._processing_users.add(user_id)
+
+    try:
+        if is_admin_user or user['balance'] > 0:
+            if not is_admin_user:
+                # Списываем 1 публикацию с использованием транзакции
+                success = await db.update_user_balance_transactional(
+                    user_id=user_id,
+                    amount=-1,
+                    transaction_type="auction_created",
+                    description="Создание аукциона",
+                    auction_id=auction_data['id']
+                )
+                if not success:
+                    await callback.message.answer("❌ Ошибка при списании баланса. Попробуйте позже.")
+                    return
         
         await callback.message.edit_reply_markup(reply_markup=None)
         
@@ -1807,25 +2023,43 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
         user_auctions = await db.get_user_auctions(user_id)
         if not user_auctions:
             await callback.message.answer("Лот не найден. Создайте аукцион заново.")
-            await callback.answer()
             return
 
         auction_data = user_auctions[0]  # Самый новый аукцион
+        
+        # Проверяем, не был ли уже опубликован этот аукцион
+        if auction_data.get('channel_message_id') and auction_data.get('channel_chat_id'):
+            await callback.message.answer("❌ Этот аукцион уже был опубликован в канале.")
+            return
         
         # Форматируем текст аукциона
         text, bidding_keyboard = await format_auction_text(auction_data, show_buttons=True)
 
         try:
             # Публикуем в канал
-            posted_message = await _publish_auction_to_channel(auction_data, text, bidding_keyboard)
-            
-            if posted_message:
-                # Сохраняем информацию о сообщении в канале
-                await db.set_auction_channel_info(
-                    auction_data['id'],
-                    posted_message.chat.id,
-                    posted_message.message_id
-                )
+            try:
+                posted_message = await _publish_auction_to_channel(auction_data, text, bidding_keyboard)
+                
+                if posted_message:
+                    # Сохраняем информацию о сообщении в канале
+                    await db.set_auction_channel_info(
+                        auction_data['id'],
+                        posted_message.chat.id,
+                        posted_message.message_id
+                    )
+                    logging.info(f"✅ Аукцион #{auction_data['id']} успешно опубликован в канале")
+                else:
+                    # Если публикация не удалась, возвращаем баланс
+                    if not is_admin_user:
+                        await db.rollback_auction_balance(auction_data['id'], user_id)
+                    raise Exception("Не удалось опубликовать аукцион в канале")
+                    
+            except Exception as publish_error:
+                logging.error(f"❌ Ошибка при публикации аукциона #{auction_data['id']}: {publish_error}")
+                # Возвращаем баланс в случае ошибки публикации
+                if not is_admin_user:
+                    await db.rollback_auction_balance(auction_data['id'], user_id)
+                raise publish_error
             
             new_balance = await db.get_user_balance(user_id)
             balance_text = "∞ (администратор)" if is_admin_user else f"{new_balance}"
@@ -1849,40 +2083,58 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
             # )
         except Exception as e:
             logging.error(f"Failed to post to channel: {e}")
-            await callback.message.answer("Не удалось опубликовать в канале. Проверьте, что бот добавлен в канал и имеет права администратора.")
-    else:
-        await callback.message.answer(
-            "❗️ На вашем балансе недостаточно публикаций. Пополните баланс для создания аукционов."
-        )
+            # Возвращаем баланс в случае ошибки публикации
+            if not is_admin_user:
+                await db.rollback_auction_balance(auction_data['id'], user_id)
+            
+            # Формируем более информативное сообщение об ошибке
+            error_message = "❌ Не удалось опубликовать аукцион в канале.\n\n"
+            
+            # Анализируем тип ошибки
+            error_str = str(e).lower()
+            if "не добавлен в канал" in error_str or "не имеет прав администратора" in error_str:
+                error_message += "🔧 <b>Проблема с правами бота:</b>\n"
+                error_message += "• Проверьте, что бот добавлен в канал как администратор\n"
+                error_message += "• Убедитесь, что у бота есть права на публикацию постов\n\n"
+            elif "публикацию постов" in error_str:
+                error_message += "🔧 <b>Проблема с правами на публикацию:</b>\n"
+                error_message += "• У бота нет прав на публикацию постов в канале\n"
+                error_message += "• Проверьте настройки администрирования бота\n\n"
+            elif "forbidden" in error_str or "chat not found" in error_str:
+                error_message += "🔧 <b>Проблема с доступом к каналу:</b>\n"
+                error_message += "• Канал не найден или бот заблокирован\n"
+                error_message += "• Проверьте корректность ID канала\n\n"
+            else:
+                error_message += f"🔧 <b>Техническая ошибка:</b> {str(e)}\n\n"
+            
+            error_message += "💰 Баланс возвращен.\n"
+            error_message += "🔄 Попробуйте создать аукцион позже или обратитесь к администратору."
+            
+            await callback.message.answer(error_message, parse_mode="HTML")
+        else:
+            await callback.message.answer(
+                "❗️ На вашем балансе недостаточно публикаций. Пополните баланс для создания аукционов."
+            )
+    finally:
+        # Удаляем пользователя из списка обрабатываемых
+        if hasattr(check_balance_before_publish, '_processing_users'):
+            check_balance_before_publish._processing_users.discard(user_id)
+    
     await callback.answer()
 
 
 async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -> types.Message:
     """Публикует аукцион в канал"""
+    logging.info(f"🚀 Начинаем публикацию аукциона #{auction_data.get('id')} в канал {CHANNEL_USERNAME}")
+    
     try:
-        # Проверяем права бота в канале
-        try:
-            chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=bot.id)
-            logging.info(f"🔍 Статус бота в канале: {chat_member.status}")
-            logging.info(f"🔍 Права бота: {chat_member.privileges}")
-            
-            if chat_member.status not in ['administrator', 'creator']:
-                raise Exception(f"Бот не является администратором канала. Статус: {chat_member.status}")
-            
-            # Проверяем права на отправку сообщений
-            if hasattr(chat_member, 'privileges') and chat_member.privileges:
-                if not chat_member.privileges.can_post_messages:
-                    logging.warning("⚠️ У бота нет прав на публикацию постов в канале")
-                if not chat_member.privileges.can_send_messages:
-                    logging.warning("⚠️ У бота нет прав на отправку сообщений в канале")
-                    
-        except Exception as e:
-            logging.error(f"❌ Ошибка проверки прав бота в канале: {e}")
-            raise Exception("Бот не добавлен в канал или не имеет прав администратора")
-        
         media_items = auction_data.get('media', [])
         
+        # Пытаемся опубликовать сообщение напрямую без проверки прав
+        logging.info("📝 Публикуем сообщение в канал без проверки прав...")
+        
         if not media_items:
+            logging.info("📝 Публикуем текстовое сообщение в канал")
             return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
     except Exception as e:
         logging.error(f"❌ Ошибка публикации в канал: {e}")
@@ -2934,6 +3186,22 @@ async def set_admin_commands(user_id: int):
 #     """Обрабатывает уведомления о платежах от сервера (отключено)"""
 #     pass
 
+async def recover_failed_auctions():
+    """Восстановление после сбоев - возврат баланса за неудачно опубликованные аукционы"""
+    try:
+        failed_auctions = await db.get_failed_auctions()
+        if failed_auctions:
+            logging.info(f"🔄 Найдено {len(failed_auctions)} аукционов с неудачной публикацией, восстанавливаем баланс...")
+            
+            for auction in failed_auctions:
+                success = await db.rollback_auction_balance(auction['id'], auction['owner_id'])
+                if success:
+                    logging.info(f"✅ Восстановлен баланс для аукциона {auction['id']}, пользователь {auction['owner_id']}")
+                else:
+                    logging.error(f"❌ Не удалось восстановить баланс для аукциона {auction['id']}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка при восстановлении после сбоев: {e}")
+
 # --- Запуск бота ---
 async def main():
     payment_task = None  # Initialize payment_task variable
@@ -2944,6 +3212,9 @@ async def main():
         # Инициализируем базу данных
         await db.init_db()
         logging.info("Database initialized")
+        
+        # Восстанавливаем баланс после возможных сбоев
+        await recover_failed_auctions()
         
         # Инициализируем систему уведомлений
         init_notifications(BOT_TOKEN)
