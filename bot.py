@@ -3291,8 +3291,8 @@ async def process_telegram_update(update_data):
         # Создаем объект Update из данных
         update = Update(**update_data)
         
-        # Обрабатываем обновление через диспетчер
-        await dp.process_update(update)
+        # Обрабатываем обновление через диспетчер (правильный метод для aiogram 3.x)
+        await dp.feed_update(bot, update)
         logging.info("✅ Обновление обработано успешно")
         
     except Exception as e:
