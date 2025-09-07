@@ -3363,6 +3363,11 @@ async def process_telegram_update_simple(update_data):
         import traceback
         logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
+def get_fsm_state(message):
+    """Получает состояние FSM для сообщения"""
+    from aiogram.fsm.context import FSMContext
+    return FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+
 async def handle_message_direct(bot: Bot, message):
     """Прямая обработка сообщений"""
     try:
@@ -3371,7 +3376,8 @@ async def handle_message_direct(bot: Bot, message):
         # Проверяем команды
         if message.text:
             if message.text.startswith('/start'):
-                await cmd_start(message)
+                state = get_fsm_state(message)
+                await cmd_start(message, state)
             elif message.text.startswith('/update_admin'):
                 await update_admin_command(message)
             elif message.text.startswith('/check_admin'):
@@ -3393,14 +3399,10 @@ async def handle_message_direct(bot: Bot, message):
             elif message.text.startswith("Пополнить баланс 💳"):
                 await top_up_balance(message)
             elif message.text == "Создать аукцион 🚀":
-                # Получаем состояние FSM
-                from aiogram.fsm.context import FSMContext
-                state = FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+                state = get_fsm_state(message)
                 await start_auction_creation(message, state)
             elif message.text.lower() == "отмена":
-                # Получаем состояние FSM
-                from aiogram.fsm.context import FSMContext
-                state = FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+                state = get_fsm_state(message)
                 await cancel_handler(message, state)
             elif message.text.startswith("/remove_balance"):
                 await remove_balance_command(message)
@@ -3414,8 +3416,9 @@ async def handle_message_direct(bot: Bot, message):
                 # Обрабатываем как обычное сообщение через FSM
                 await dp.feed_update(bot, Update(update_id=0, message=message))
         
-        # Обрабатываем медиа
+        # Обрабатываем медиа через FSM
         elif message.photo or message.video or message.document:
+            # Для медиа сообщений используем диспетчер, так как они могут быть в FSM состоянии
             await dp.feed_update(bot, Update(update_id=0, message=message))
             
     except Exception as e:
