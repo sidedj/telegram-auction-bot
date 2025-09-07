@@ -3107,15 +3107,33 @@ def yoomoney_webhook():
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
-    """Новый webhook - обрабатывает все платежи"""
-    logging.info("=== WEBHOOK VERSION 14.0 - ВСЕ ПЛАТЕЖИ ===")
+    """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
+    logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
     
     if request.method == 'GET':
         return "OK"
     
-    # Получаем данные из формы
-    data = request.form.to_dict()
-    logging.info(f"📥 Получен платеж: {data}")
+    # Проверяем, это сообщение от Telegram или платеж
+    content_type = request.content_type
+    
+    if 'application/json' in content_type:
+        # Это сообщение от Telegram
+        try:
+            import asyncio
+            data = request.get_json()
+            logging.info(f"📱 Получено сообщение от Telegram: {data}")
+            
+            # Обрабатываем сообщение через aiogram
+            asyncio.create_task(process_telegram_update(data))
+            return "OK"
+        except Exception as e:
+            logging.error(f"❌ Ошибка обработки сообщения Telegram: {e}")
+            return "ERROR", 500
+    
+    else:
+        # Это платеж от YooMoney
+        data = request.form.to_dict()
+        logging.info(f"📥 Получен платеж: {data}")
     
     # Обрабатываем все платежи (тестовые и реальные)
     if data.get('notification_type') in ['card-incoming', 'p2p-incoming']:
@@ -3231,6 +3249,52 @@ def webhook_new():
     
     # Возвращаем OK
     return "OK"
+
+async def process_telegram_update(update_data):
+    """Обрабатывает обновления от Telegram"""
+    try:
+        from aiogram.types import Update
+        import asyncio
+        
+        # Создаем объект Update из данных
+        update = Update(**update_data)
+        
+        # Обрабатываем обновление через диспетчер
+        await dp.process_update(update)
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки обновления Telegram: {e}")
+
+# Инициализация для webhook режима
+async def init_webhook_bot():
+    """Инициализирует бота для webhook режима"""
+    try:
+        logging.info("=== ИНИЦИАЛИЗАЦИЯ WEBHOOK БОТА ===")
+        
+        # Инициализируем базу данных
+        await db.init_db()
+        logging.info("Database initialized")
+        
+        # Инициализируем систему уведомлений
+        init_notifications(BOT_TOKEN)
+        logging.info("Notification system initialized")
+        
+        # Настраиваем команды бота
+        await set_bot_commands()
+        logging.info("Bot commands configured")
+        
+        # Запускаем систему персистентности аукционов
+        await auction_persistence.start()
+        logging.info("Auction persistence system started")
+        
+        logging.info("✅ Webhook бот инициализирован")
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка инициализации webhook бота: {e}")
+
+# Запускаем инициализацию при импорте модуля
+import asyncio
+asyncio.create_task(init_webhook_bot())
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
