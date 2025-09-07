@@ -2114,8 +2114,7 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
                 user_id=user_id,
                 amount=-1,
                 transaction_type="auction_created",
-                description="Создание аукциона",
-                auction_id=auction_data['id']
+                description="Создание аукциона"
             )
             if not success:
                 await callback.message.answer("❌ Ошибка при списании баланса. Попробуйте позже.")
