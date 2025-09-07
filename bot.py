@@ -3366,7 +3366,10 @@ async def process_telegram_update_simple(update_data):
 def get_fsm_state(message):
     """Получает состояние FSM для сообщения"""
     from aiogram.fsm.context import FSMContext
-    return FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+    from aiogram.fsm.storage.base import StorageKey
+    # Создаем ключ для FSM
+    key = StorageKey(chat_id=message.chat.id, user_id=message.from_user.id)
+    return FSMContext(storage=dp.storage, key=key)
 
 async def handle_message_direct(bot: Bot, message):
     """Прямая обработка сообщений"""
