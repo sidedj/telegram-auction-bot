@@ -3114,7 +3114,7 @@ def webhook_new():
     """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
     global _webhook_initialized
     
-    logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
+    logging.info("=== WEBHOOK VERSION 16.0 - УПРОЩЕННАЯ ОБРАБОТКА ===")
     
     if request.method == 'GET':
         return "OK"
@@ -3179,7 +3179,7 @@ def webhook_new():
                 
             logging.info(f"📱 Получено сообщение от Telegram: {data}")
             
-            # Обрабатываем сообщение в новом event loop
+            # Обрабатываем сообщение напрямую без создания нового event loop
             import asyncio
             import threading
             
@@ -3187,7 +3187,7 @@ def webhook_new():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    loop.run_until_complete(process_telegram_update(data))
+                    loop.run_until_complete(process_telegram_update_simple(data))
                 except Exception as e:
                     logging.error(f"❌ Ошибка обработки: {e}")
                     import traceback
@@ -3327,10 +3327,10 @@ def webhook_new():
     # Возвращаем OK
     return "OK"
 
-async def process_telegram_update(update_data):
-    """Обрабатывает обновления от Telegram"""
+async def process_telegram_update_simple(update_data):
+    """Упрощенная обработка обновлений от Telegram"""
     try:
-        from aiogram.types import Update
+        from aiogram.types import Update, Message, CallbackQuery, PreCheckoutQuery
         from aiogram import Bot
         import asyncio
         
@@ -3345,8 +3345,13 @@ async def process_telegram_update(update_data):
         # Инициализируем базу данных для этого event loop
         await db.init_db()
         
-        # Обрабатываем обновление через глобальный диспетчер
-        await dp.feed_update(temp_bot, update)
+        # Обрабатываем сообщения напрямую
+        if update.message:
+            await handle_message_direct(temp_bot, update.message)
+        elif update.callback_query:
+            await handle_callback_direct(temp_bot, update.callback_query)
+        elif update.pre_checkout_query:
+            await handle_pre_checkout_direct(temp_bot, update.pre_checkout_query)
         
         # Закрываем сессию бота
         await temp_bot.session.close()
@@ -3355,6 +3360,88 @@ async def process_telegram_update(update_data):
         
     except Exception as e:
         logging.error(f"❌ Ошибка обработки обновления Telegram: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
+
+async def handle_message_direct(bot: Bot, message):
+    """Прямая обработка сообщений"""
+    try:
+        from aiogram.types import Update
+        
+        # Проверяем команды
+        if message.text:
+            if message.text.startswith('/start'):
+                await cmd_start(message)
+            elif message.text.startswith('/update_admin'):
+                await update_admin_command(message)
+            elif message.text.startswith('/check_admin'):
+                await check_admin_command(message)
+            elif message.text.startswith('/add_balance'):
+                await add_balance_command(message)
+            elif message.text.startswith('/sync_payments'):
+                await sync_payments_command(message)
+            elif message.text.startswith('/manual_payment'):
+                await manual_payment_command(message)
+            elif message.text.startswith('/check_payment'):
+                await check_payment_command(message)
+            elif message.text.startswith('/payment_status'):
+                await payment_status_command(message)
+            elif message.text == "Мои аукционы 📦":
+                await my_auctions(message)
+            elif message.text == "📊 Статистика":
+                await statistics(message)
+            elif message.text.startswith("Пополнить баланс 💳"):
+                await top_up_balance(message)
+            elif message.text == "Создать аукцион 🚀":
+                # Получаем состояние FSM
+                from aiogram.fsm.context import FSMContext
+                state = FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+                await start_auction_creation(message, state)
+            elif message.text.lower() == "отмена":
+                # Получаем состояние FSM
+                from aiogram.fsm.context import FSMContext
+                state = FSMContext(storage=dp.storage, key=message.from_user.id, chat=message.chat.id)
+                await cancel_handler(message, state)
+            elif message.text.startswith("/remove_balance"):
+                await remove_balance_command(message)
+            elif message.text == "/persistence_info":
+                await persistence_info_command(message)
+            elif message.text == "/grant_admin":
+                await grant_admin_command(message)
+            elif message.text == "/fix_admin":
+                await fix_admin_command(message)
+            else:
+                # Обрабатываем как обычное сообщение через FSM
+                await dp.feed_update(bot, Update(update_id=0, message=message))
+        
+        # Обрабатываем медиа
+        elif message.photo or message.video or message.document:
+            await dp.feed_update(bot, Update(update_id=0, message=message))
+            
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки сообщения: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
+
+async def handle_callback_direct(bot: Bot, callback):
+    """Прямая обработка callback запросов"""
+    try:
+        from aiogram.types import Update
+        # Обрабатываем через диспетчер
+        await dp.feed_update(bot, Update(update_id=0, callback_query=callback))
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки callback: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
+
+async def handle_pre_checkout_direct(bot: Bot, pre_checkout):
+    """Прямая обработка pre-checkout запросов"""
+    try:
+        from aiogram.types import Update
+        # Обрабатываем через диспетчер
+        await dp.feed_update(bot, Update(update_id=0, pre_checkout_query=pre_checkout))
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки pre-checkout: {e}")
         import traceback
         logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
