@@ -7,6 +7,7 @@ from database import Database
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import CHANNEL_USERNAME_LINK
+from timezone_utils import get_moscow_time, get_moscow_time_naive, format_moscow_time, get_time_until_moscow, format_time_left
 
 class AuctionTimer:
     def __init__(self, bot: Bot, db: Database, channel_username: str):
@@ -214,7 +215,7 @@ class AuctionTimer:
 
 
     async def get_auction_time_left(self, end_time) -> str:
-        """Получить оставшееся время до окончания аукциона"""
+        """Получить оставшееся время до окончания аукциона (в московском времени)"""
         # Преобразуем строку в datetime если необходимо
         if isinstance(end_time, str):
             try:
@@ -223,21 +224,22 @@ class AuctionTimer:
                 # Если не удается распарсить, возвращаем ошибку
                 return "Ошибка времени"
         
-        now = datetime.now()
+        # Получаем текущее московское время
+        now = get_moscow_time()
+        
+        # Если end_time без часового пояса, считаем его московским
+        if end_time.tzinfo is None:
+            from timezone_utils import MOSCOW_TZ
+            end_time = MOSCOW_TZ.localize(end_time)
+        elif end_time.tzinfo != get_moscow_time().tzinfo:
+            # Конвертируем в московское время
+            end_time = end_time.astimezone(get_moscow_time().tzinfo)
+        
         if end_time <= now:
             return "Завершен"
             
         delta = end_time - now
-        days = delta.days
-        hours, remainder = divmod(delta.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        if days > 0:
-            return f"{days}д {hours}ч {minutes}м"
-        elif hours > 0:
-            return f"{hours}ч {minutes}м"
-        else:
-            return f"{minutes}м"
+        return format_time_left(delta)
 
     async def format_auction_text(self, auction: Dict, show_buttons: bool = True) -> tuple[str, InlineKeyboardMarkup]:
         """Форматировать текст аукциона"""
@@ -267,9 +269,10 @@ class AuctionTimer:
             try:
                 end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
             except ValueError:
-                end_time = datetime.now()  # Fallback
+                end_time = get_moscow_time_naive()  # Fallback
         
-        text += f"<b>Окончание:</b> {end_time.strftime('%d.%m.%Y %H:%M')}\n"
+        # Форматируем время в московском часовом поясе
+        text += f"<b>Окончание:</b> {format_moscow_time(end_time)}\n"
         text += f"<b>Осталось:</b> {time_left}\n\n"
         
         if auction['status'] == 'active':

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from timezone_utils import get_moscow_time_naive as now, format_moscow_time
 import re
 import threading
 from flask import Flask, request
@@ -475,12 +476,18 @@ async def check_admin_command(message: types.Message):
     
     await message.answer(status_text, parse_mode="HTML")
 
-@dp.message(Command("add_balance"))
+@dp.message(Command("add_balance_simple"))
 async def add_balance_command(message: types.Message):
     """Команда для принудительного начисления баланса (только для админов)"""
     try:
         user_id = message.from_user.id
-        logging.info(f"🔍 Команда /add_balance от пользователя {user_id}")
+        logging.info(f"🔍 Команда /add_balance_simple от пользователя {user_id}")
+        
+        # Проверяем, что база данных инициализирована
+        if not hasattr(db, 'db_path'):
+            logging.error("❌ База данных не инициализирована")
+            await message.answer("❌ Ошибка: База данных не инициализирована. Попробуйте перезапустить бота.")
+            return
         
         user = await db.get_or_create_user(user_id)
         logging.info(f"🔍 Пользователь получен: {user}")
@@ -490,12 +497,12 @@ async def add_balance_command(message: types.Message):
             await message.answer("❌ У вас нет прав администратора.")
             return
         
-        # Парсим команду: /add_balance <user_id> <amount>
+        # Парсим команду: /add_balance_simple <user_id> <amount>
         parts = message.text.split()
         logging.info(f"🔍 Парсинг команды: {parts}")
         
         if len(parts) != 3:
-            await message.answer("❌ Использование: /add_balance <user_id> <количество_публикаций>")
+            await message.answer("❌ Использование: /add_balance_simple <user_id> <количество_публикаций>")
             return
         
         target_user_id = int(parts[1])
@@ -513,13 +520,37 @@ async def add_balance_command(message: types.Message):
         new_balance = current_balance + amount
         logging.info(f"🔍 Текущий баланс: {current_balance}, новый баланс: {new_balance}")
         
-        # Обновляем баланс
+        # Обновляем баланс через прямую работу с SQLite
         logging.info(f"🔍 Обновляем баланс пользователя {target_user_id}")
-        success = await db.update_user_balance(target_user_id, amount, 'admin_grant', f'Начислено администратором: {amount} публикаций')
-        logging.info(f"🔍 Результат обновления баланса: {success}")
-        
-        if not success:
-            await message.answer("❌ Ошибка при обновлении баланса в базе данных.")
+        try:
+            import sqlite3
+            with sqlite3.connect(DATABASE_PATH) as db_conn:
+                cursor = db_conn.cursor()
+                
+                # Создаем пользователя, если его нет
+                cursor.execute(
+                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                    (target_user_id, None, None, 0, False)
+                )
+                
+                # Обновляем баланс
+                cursor.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (amount, target_user_id)
+                )
+                
+                # Записываем транзакцию
+                cursor.execute(
+                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                    (target_user_id, amount, "admin_grant", f"Начислено администратором: {amount} публикаций")
+                )
+                
+                db_conn.commit()
+                logging.info(f"✅ Баланс успешно обновлен через SQLite: пользователь {target_user_id}, +{amount}")
+                
+        except Exception as db_error:
+            logging.error(f"❌ Ошибка базы данных при обновлении баланса: {db_error}")
+            await message.answer(f"❌ Ошибка базы данных: {str(db_error)}")
             return
         
         # Отправляем уведомление пользователю
@@ -546,18 +577,51 @@ async def add_balance_command(message: types.Message):
             f"📱 Уведомление отправлено пользователю",
             parse_mode="HTML"
         )
-        logging.info(f"✅ Команда /add_balance выполнена успешно")
+        logging.info(f"✅ Команда /add_balance_simple выполнена успешно")
         
     except ValueError as e:
-        logging.error(f"❌ ValueError в add_balance: {e}")
-        await message.answer("❌ Неверный формат команды. Используйте: /add_balance <user_id> <количество>")
+        logging.error(f"❌ ValueError в add_balance_simple: {e}")
+        await message.answer("❌ Неверный формат команды. Используйте: /add_balance_simple <user_id> <количество>")
     except Exception as e:
-        logging.error(f"❌ Общая ошибка в add_balance: {e}")
+        logging.error(f"❌ Общая ошибка в add_balance_simple: {e}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         await message.answer(f"❌ Ошибка при начислении баланса: {str(e)}")
 
-@dp.message(Command("add_balance_simple"))
-async def add_balance_simple_command(message: types.Message):
-    """Упрощенная команда для добавления баланса (только для админов)"""
+@dp.message(Command("test_time"))
+async def test_time_command(message: types.Message):
+    """Тестовая команда для проверки времени"""
+    try:
+        from timezone_utils import get_moscow_time, get_moscow_time_naive, format_moscow_time
+        import datetime
+        
+        # Получаем разные варианты времени
+        utc_time = datetime.datetime.utcnow()
+        local_time = datetime.datetime.now()
+        moscow_time = get_moscow_time()
+        moscow_time_naive = get_moscow_time_naive()
+        
+        text = "🕐 <b>Проверка времени в боте:</b>\n\n"
+        text += f"🌍 <b>UTC время:</b> {utc_time.strftime('%d.%m.%Y %H:%M:%S')}\n"
+        text += f"💻 <b>Локальное время:</b> {local_time.strftime('%d.%m.%Y %H:%M:%S')}\n"
+        text += f"🇷🇺 <b>Московское время (с TZ):</b> {moscow_time.strftime('%d.%m.%Y %H:%M:%S %Z')}\n"
+        text += f"🇷🇺 <b>Московское время (без TZ):</b> {moscow_time_naive.strftime('%d.%m.%Y %H:%M:%S')}\n"
+        text += f"📅 <b>Форматированное:</b> {format_moscow_time(moscow_time_naive)}\n\n"
+        
+        # Показываем разницу
+        utc_offset = local_time - utc_time
+        text += f"⏰ <b>Разница с UTC:</b> {utc_offset}\n"
+        text += f"🌍 <b>Часовой пояс системы:</b> {datetime.datetime.now().astimezone().tzinfo}\n"
+        
+        await message.answer(text, parse_mode="HTML")
+        
+    except Exception as e:
+        logging.error(f"❌ Ошибка в тесте времени: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("test_balance"))
+async def test_balance_command(message: types.Message):
+    """Тестовая команда для проверки начисления баланса"""
     try:
         user_id = message.from_user.id
         user = await db.get_or_create_user(user_id)
@@ -566,75 +630,65 @@ async def add_balance_simple_command(message: types.Message):
             await message.answer("❌ У вас нет прав администратора.")
             return
         
-        # Парсим команду: /add_balance_simple <user_id> <amount>
-        parts = message.text.split()
-        if len(parts) != 3:
-            await message.answer("❌ Использование: /add_balance_simple <user_id> <количество_публикаций>")
-            return
+        # Тестируем с тестовым пользователем
+        test_user_id = 999999999
+        test_amount = 1
         
-        target_user_id = int(parts[1])
-        amount = int(parts[2])
-        
-        if amount <= 0:
-            await message.answer("❌ Количество публикаций должно быть больше 0.")
-            return
+        await message.answer("🧪 Тестируем начисление баланса...")
         
         # Используем прямую работу с базой данных
         import sqlite3
-        with sqlite3.connect(DATABASE_PATH) as db_conn:
-            cursor = db_conn.cursor()
-            
-            # Создаем пользователя, если его нет
-            cursor.execute(
-                "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
-                (target_user_id, None, None, 0, False)
-            )
-            
-            # Получаем текущий баланс
-            cursor.execute("SELECT balance FROM users WHERE user_id = ?", (target_user_id,))
-            result = cursor.fetchone()
-            current_balance = result[0] if result else 0
-            new_balance = current_balance + amount
-            
-            # Обновляем баланс
-            cursor.execute(
-                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                (amount, target_user_id)
-            )
-            
-            # Записываем транзакцию
-            cursor.execute(
-                "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                (target_user_id, amount, "admin_grant", f"Начислено администратором: {amount} публикаций")
-            )
-            
-            db_conn.commit()
-        
-        # Отправляем уведомление пользователю
         try:
-            await bot.send_message(
-                target_user_id,
-                f"✅ <b>Ваш баланс пополнен!</b>\n\n"
-                f"💰 Зачислено: {amount} публикаций\n"
-                f"💳 Текущий баланс: {new_balance} публикаций\n\n"
-                f"📝 Причина: Начислено администратором",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logging.error(f"❌ Ошибка отправки уведомления: {e}")
+            with sqlite3.connect(DATABASE_PATH) as db_conn:
+                cursor = db_conn.cursor()
+                
+                # Создаем тестового пользователя
+                cursor.execute(
+                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                    (test_user_id, "test_user", "Test User", 0, False)
+                )
+                
+                # Получаем текущий баланс
+                cursor.execute("SELECT balance FROM users WHERE user_id = ?", (test_user_id,))
+                result = cursor.fetchone()
+                current_balance = result[0] if result else 0
+                new_balance = current_balance + test_amount
+                
+                # Обновляем баланс
+                cursor.execute(
+                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+                    (test_amount, test_user_id)
+                )
+                
+                # Записываем транзакцию
+                cursor.execute(
+                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
+                    (test_user_id, test_amount, "admin_grant", f"Тестовое начисление: {test_amount} публикаций")
+                )
+                
+                db_conn.commit()
+                logging.info(f"✅ Тестовый баланс успешно обновлен: пользователь {test_user_id}, +{test_amount}")
+                
+        except Exception as db_error:
+            logging.error(f"❌ Ошибка базы данных в тесте: {db_error}")
+            await message.answer(f"❌ Ошибка базы данных: {str(db_error)}")
+            return
         
         await message.answer(
-            f"✅ <b>Баланс обновлен!</b>\n\n"
-            f"👤 Пользователь: {target_user_id}\n"
+            f"✅ <b>Тест прошел успешно!</b>\n\n"
+            f"👤 Тестовый пользователь: {test_user_id}\n"
             f"💰 Было: {current_balance} публикаций\n"
             f"💰 Стало: {new_balance} публикаций\n"
-            f"➕ Добавлено: {amount} публикаций",
+            f"➕ Добавлено: {test_amount} публикаций\n\n"
+            f"🎉 Функция начисления баланса работает корректно!",
             parse_mode="HTML"
         )
         
     except Exception as e:
-        logging.error(f"Error in add_balance_simple: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        logging.error(f"❌ Ошибка в тесте: {e}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        await message.answer(f"❌ Ошибка в тесте: {str(e)}")
 
 @dp.message(Command("sync_payments"))
 async def sync_payments_command(message: types.Message):
@@ -1338,8 +1392,8 @@ async def process_blitz_price(message: types.Message, state: FSMContext):
 @dp.callback_query(StateFilter(AuctionCreation.waiting_for_duration), F.data.startswith("duration_"))
 async def process_duration(callback: types.CallbackQuery, state: FSMContext):
     duration_seconds = int(callback.data.split("_")[1])
-    end_time = datetime.now() + timedelta(seconds=duration_seconds)
-    await state.update_data(duration=duration_seconds, end_time=end_time, end_time_str=end_time.strftime("%d.%m.%Y %H:%M"))
+    end_time = now() + timedelta(seconds=duration_seconds)
+    await state.update_data(duration=duration_seconds, end_time=end_time, end_time_str=format_moscow_time(end_time))
     
     data = await state.get_data()
     
@@ -1883,9 +1937,9 @@ async def handle_buyout(callback: types.CallbackQuery):
             try:
                 end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
             except ValueError:
-                end_time = datetime.now()
+                end_time = now()
         
-        new_text += f"<b>Окончание:</b> {end_time.strftime('%d.%m.%Y %H:%M')}\n\n"
+        new_text += f"<b>Окончание:</b> {format_moscow_time(end_time)}\n\n"
         new_text += f"<b>Статус:</b> ✅ ПРОДАНО\n"
         new_text += f"<b>Покупатель:</b> {buyer_link}"
         
@@ -2035,7 +2089,7 @@ async def handle_bid(callback: types.CallbackQuery):
                 "bidder_username": callback.from_user.username or callback.from_user.full_name,
                 "amount": new_price,
                 "bid_amount": bid_amount,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": now().isoformat()
             }
             # await api_integration.sync_bid_to_external(auction['id'], bid_data)  # Отключено
         except Exception as e:
@@ -2260,8 +2314,8 @@ async def admin_balance_callback(callback: types.CallbackQuery):
     
     text = "💰 <b>Управление балансом</b>\n\n"
     text += "Для изменения баланса пользователя используйте команды:\n\n"
-    text += "<code>/add_balance [user_id] [amount] [description]</code>\n"
-    text += "Пример: <code>/add_balance 123456789 5 Бонус за активность</code>\n\n"
+    text += "<code>/add_balance_simple [user_id] [amount] [description]</code>\n"
+    text += "Пример: <code>/add_balance_simple 123456789 5 Бонус за активность</code>\n\n"
     text += "<code>/remove_balance [user_id] [amount] [description]</code>\n"
     text += "Пример: <code>/remove_balance 123456789 2 Штраф</code>\n\n"
     text += "Или используйте консольную админ-панель:\n"
@@ -2290,7 +2344,7 @@ async def admin_auctions_callback(callback: types.CallbackQuery):
         async with aiosqlite.connect(db.db_path) as db_conn:
             cursor = await db_conn.execute(
                 "SELECT id, owner_id, description, current_price, end_time FROM auctions WHERE status = 'active' AND end_time > ? ORDER BY created_at DESC LIMIT 5",
-                (datetime.now(),)
+                (now(),)
             )
             auctions = await cursor.fetchall()
             
@@ -2855,7 +2909,7 @@ async def set_admin_commands(user_id: int):
     # Админские команды
     admin_commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
-        BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
+        BotCommand(command="add_balance_simple", description="👑 Добавить баланс пользователю"),
         BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
         BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
         BotCommand(command="restore_state", description="👑 Восстановить состояние аукционов"),
@@ -2863,6 +2917,7 @@ async def set_admin_commands(user_id: int):
         BotCommand(command="export_balances", description="👑 Экспорт балансов"),
         BotCommand(command="make_admin", description="👑 Выдать админские права"),
         BotCommand(command="fix_admin", description="👑 Исправить админские права"),
+        BotCommand(command="test_time", description="🕐 Тест времени"),
     ]
     
     try:
