@@ -3368,7 +3368,7 @@ def get_fsm_state(message):
     from aiogram.fsm.context import FSMContext
     from aiogram.fsm.storage.base import StorageKey
     # Создаем ключ для FSM
-    key = StorageKey(chat_id=message.chat.id, user_id=message.from_user.id)
+    key = StorageKey(chat_id=message.chat.id, user_id=message.from_user.id, bot_id=bot.id)
     return FSMContext(storage=dp.storage, key=key)
 
 async def handle_message_direct(bot: Bot, message):
