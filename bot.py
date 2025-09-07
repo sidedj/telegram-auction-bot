@@ -31,7 +31,7 @@ from aiogram.types import (
 )
 
 # Импорты наших модулей
-from config import load_config, DISABLE_SUBSCRIPTION_CHECK
+from config import load_config, DISABLE_SUBSCRIPTION_CHECK, WEBHOOK_URL
 from database import Database
 # from auction_timer import AuctionTimer  # Отключено
 from services import BalanceManager, NotificationManager, AdminPanel, init_notifications, send_auction_created_notification, send_auction_published_notification
@@ -438,7 +438,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     welcome_text += f"• Управлять ставками и блиц-покупками\n"
     welcome_text += f"• Отслеживать историю торгов\n\n"
     welcome_text += f"💰 <b>Ваш баланс:</b> {balance_text} публикаций\n\n"
-    welcome_text += f"📢 <b>Важно:</b> Для участия в аукционах необходимо быть подписанным на канал <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>\n\n"
+    welcome_text += f"📢 <b>Важно:</b> Для участия в аукционах необходимо быть подписанным на канал <a href='https://t.me/baraxolkavspb'>Барахолка СПБ</a>\n\n"
     welcome_text += f"🚀 <b>Готовы начать?</b> Нажмите кнопку ниже!"
 
     await message.answer(
@@ -706,6 +706,47 @@ async def test_direct_command(message: types.Message):
     except Exception as e:
         logging.error(f"Error in direct test: {e}")
         await message.answer(f"❌ Ошибка при прямом тесте: {str(e)}")
+
+@dp.message(Command("test_auction"))
+async def test_auction_command(message: types.Message):
+    """Тест создания аукциона (только для админов)"""
+    user_id = message.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await message.answer("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        logging.info(f"🧪 Тест создания аукциона...")
+        
+        # Создаем тестовые данные аукциона
+        test_auction_data = {
+            'id': 999,
+            'description': 'Тестовый аукцион',
+            'start_price': 100,
+            'blitz_price': 500,
+            'media': []
+        }
+        
+        # Форматируем текст
+        text, keyboard = await format_auction_text(test_auction_data, show_buttons=True)
+        
+        # Пытаемся опубликовать
+        posted_message = await _publish_auction_to_channel(test_auction_data, text, keyboard)
+        
+        await message.answer(
+            f"✅ <b>Тест аукциона успешен!</b>\n\n"
+            f"📝 Аукцион опубликован в канал\n"
+            f"🆔 ID: <code>{posted_message.message_id}</code>\n"
+            f"📅 Время: {posted_message.date}\n\n"
+            f"💡 Публикация аукционов работает!",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in auction test: {e}")
+        await message.answer(f"❌ Ошибка при тесте аукциона: {str(e)}")
 
 @dp.message(Command("check_admin"))
 async def check_admin_command(message: types.Message):
@@ -2162,11 +2203,14 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
     """Публикует аукцион в канал"""
     logging.info(f"🚀 Начинаем публикацию аукциона #{auction_data.get('id')} в канал {CHANNEL_USERNAME}")
     
-    media_items = auction_data.get('media', [])
-    
-    if not media_items:
-        logging.info("📝 Публикуем текстовое сообщение в канал")
-        return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+    try:
+        media_items = auction_data.get('media', [])
+        
+        if not media_items:
+            logging.info("📝 Публикуем текстовое сообщение в канал")
+            message = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+            logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
+            return message
     
     # Если одно медиа — публикуем только его с кнопками
     if len(media_items) == 1:
@@ -2198,9 +2242,17 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
             break
 
     if head_photo:
-        return await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=head_photo, caption=text, reply_markup=keyboard)
+        message = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=head_photo, caption=text, reply_markup=keyboard)
+        logging.info(f"✅ Фото с подписью отправлено, ID: {message.message_id}")
+        return message
     else:
-        return await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+        message = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+        logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
+        return message
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка публикации в канал: {e}")
+        raise Exception(f"Не удалось опубликовать в канал: {str(e)}")
 
 
 # --- Логика обработки ставок (Callback) ---
@@ -3753,14 +3805,68 @@ def run_flask_app():
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
 
+async def main_webhook():
+    """Запуск бота в режиме webhook"""
+    try:
+        logging.info("Bot is starting with webhook...")
+        
+        # Инициализируем базу данных
+        await db.init_db()
+        logging.info("Database initialized")
+        
+        # Восстанавливаем баланс после возможных сбоев
+        await recover_failed_auctions()
+        
+        # Инициализируем систему уведомлений
+        init_notifications(BOT_TOKEN)
+        logging.info("Notification system initialized")
+        
+        # Настраиваем команды бота
+        await set_bot_commands()
+        logging.info("Bot commands configured")
+        
+        # Запускаем систему персистентности аукционов
+        await auction_persistence.start()
+        logging.info("Auction persistence system started")
+        
+        # Настраиваем webhook
+        if not WEBHOOK_URL:
+            logging.error("WEBHOOK_URL not set")
+            return
+            
+        # Удаляем старый webhook и устанавливаем новый
+        await bot.delete_webhook()
+        await bot.set_webhook(WEBHOOK_URL)
+        logging.info(f"Webhook set to: {WEBHOOK_URL}")
+        
+        # Запускаем бота в режиме webhook (без polling)
+        # В webhook режиме бот не должен запускать polling
+        # Вместо этого мы просто ждем, пока Flask обрабатывает webhook запросы
+        logging.info("Bot is ready to receive webhook requests")
+        
+        # Ждем бесконечно, пока бот работает
+        while True:
+            await asyncio.sleep(1)
+        
+    except Exception as e:
+        logging.error(f"Error starting bot with webhook: {e}")
+    finally:
+        # Останавливаем систему персистентности
+        await auction_persistence.stop()
+        logging.info("Auction persistence system stopped")
+        
+        # Останавливаем бота
+        await bot.session.close()
+        logging.info("Bot has been stopped.")
+
 def run_bot_with_webhook():
     """Запуск бота с webhook сервером"""
     # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask_app, daemon=True)
     flask_thread.start()
     
-    # Запускаем бота
-    asyncio.run(main())
+    # Запускаем бота в webhook режиме
+    asyncio.run(main_webhook())
 
 if __name__ == "__main__":
     # Проверяем, запущен ли на Railway или нужно использовать webhook
