@@ -16,91 +16,117 @@ class Database:
         
     async def init_db(self):
         """Инициализация базы данных и создание таблиц"""
-        async with aiosqlite.connect(self.db_path) as db:
-            # Таблица пользователей
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    full_name TEXT,
-                    balance INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_admin BOOLEAN DEFAULT FALSE
-                )
-            """)
+        import asyncio
+        import time
+        import os
+        
+        # Проверяем, инициализирована ли уже база данных
+        if hasattr(self, '_initialized') and self._initialized:
+            logging.info("Database already initialized, skipping...")
+            return
+        
+        # Пытаемся подключиться к базе данных с повторными попытками
+        max_retries = 5
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                async with aiosqlite.connect(self.db_path, timeout=10) as db:
+                    # Таблица пользователей
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            user_id INTEGER PRIMARY KEY,
+                            username TEXT,
+                            full_name TEXT,
+                            balance INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            is_admin BOOLEAN DEFAULT FALSE
+                        )
+                    """)
+                    
+                    # Таблица аукционов
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS auctions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            owner_id INTEGER NOT NULL,
+                            description TEXT NOT NULL,
+                            start_price INTEGER NOT NULL,
+                            blitz_price INTEGER,
+                            current_price INTEGER NOT NULL,
+                            current_leader_id INTEGER,
+                            current_leader_username TEXT,
+                            end_time TIMESTAMP NOT NULL,
+                            status TEXT DEFAULT 'active', -- active, sold, expired
+                            channel_message_id INTEGER,
+                            channel_chat_id INTEGER,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (owner_id) REFERENCES users (user_id)
+                        )
+                    """)
+                    
+                    # Таблица медиа файлов
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS auction_media (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            auction_id INTEGER NOT NULL,
+                            file_id TEXT NOT NULL,
+                            media_type TEXT NOT NULL, -- photo, video
+                            order_index INTEGER NOT NULL,
+                            FOREIGN KEY (auction_id) REFERENCES auctions (id) ON DELETE CASCADE
+                        )
+                    """)
+                    
+                    # Таблица ставок
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS bids (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            auction_id INTEGER NOT NULL,
+                            bidder_id INTEGER NOT NULL,
+                            bidder_username TEXT,
+                            amount INTEGER NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (auction_id) REFERENCES auctions (id) ON DELETE CASCADE,
+                            FOREIGN KEY (bidder_id) REFERENCES users (user_id)
+                        )
+                    """)
+                    
+                    # Таблица транзакций (для истории пополнений)
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS transactions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            amount INTEGER NOT NULL,
+                            transaction_type TEXT NOT NULL, -- purchase, admin_grant, auction_created
+                            description TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (user_id) REFERENCES users (user_id)
+                        )
+                    """)
+                    
+                    # Таблица обработанных платежей (для предотвращения дублирования)
+                    await db.execute("""
+                        CREATE TABLE IF NOT EXISTS processed_payments (
+                            operation_id TEXT PRIMARY KEY,
+                            user_id INTEGER,
+                            amount REAL,
+                            publications INTEGER,
+                            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
             
-            # Таблица аукционов
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS auctions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    owner_id INTEGER NOT NULL,
-                    description TEXT NOT NULL,
-                    start_price INTEGER NOT NULL,
-                    blitz_price INTEGER,
-                    current_price INTEGER NOT NULL,
-                    current_leader_id INTEGER,
-                    current_leader_username TEXT,
-                    end_time TIMESTAMP NOT NULL,
-                    status TEXT DEFAULT 'active', -- active, sold, expired
-                    channel_message_id INTEGER,
-                    channel_chat_id INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (owner_id) REFERENCES users (user_id)
-                )
-            """)
-            
-            # Таблица медиа файлов
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS auction_media (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    auction_id INTEGER NOT NULL,
-                    file_id TEXT NOT NULL,
-                    media_type TEXT NOT NULL, -- photo, video
-                    order_index INTEGER NOT NULL,
-                    FOREIGN KEY (auction_id) REFERENCES auctions (id) ON DELETE CASCADE
-                )
-            """)
-            
-            # Таблица ставок
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS bids (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    auction_id INTEGER NOT NULL,
-                    bidder_id INTEGER NOT NULL,
-                    bidder_username TEXT,
-                    amount INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (auction_id) REFERENCES auctions (id) ON DELETE CASCADE,
-                    FOREIGN KEY (bidder_id) REFERENCES users (user_id)
-                )
-            """)
-            
-            # Таблица транзакций (для истории пополнений)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    amount INTEGER NOT NULL,
-                    transaction_type TEXT NOT NULL, -- purchase, admin_grant, auction_created
-                    description TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users (user_id)
-                )
-            """)
-            
-            # Таблица обработанных платежей (для предотвращения дублирования)
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS processed_payments (
-                    operation_id TEXT PRIMARY KEY,
-                    user_id INTEGER,
-                    amount REAL,
-                    publications INTEGER,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            await db.commit()
-            logging.info("Database initialized successfully")
+                    await db.commit()
+                    logging.info("Database initialized successfully")
+                    self._initialized = True  # Отмечаем, что база данных инициализирована
+                    return  # Успешно инициализировали, выходим из цикла
+                    
+            except Exception as e:
+                logging.warning(f"Attempt {attempt + 1} failed to initialize database: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Увеличиваем задержку с каждой попыткой
+                else:
+                    logging.error(f"Failed to initialize database after {max_retries} attempts")
+                    raise
 
     async def get_or_create_user(self, user_id: int, username: str = None, full_name: str = None) -> Dict:
         """Получить или создать пользователя"""

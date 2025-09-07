@@ -74,6 +74,27 @@ def start_webhook_server():
     """Запускает webhook сервер для Railway"""
     print("🌐 Запуск webhook сервера...")
     try:
+        # Инициализируем бота при запуске
+        print("🤖 Инициализация бота...")
+        import asyncio
+        import threading
+        
+        def init_bot_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                from bot import init_webhook_bot
+                loop.run_until_complete(init_webhook_bot())
+                print("✅ Бот инициализирован")
+            except Exception as e:
+                print(f"❌ Ошибка инициализации бота: {e}")
+            finally:
+                loop.close()
+        
+        # Запускаем инициализацию бота в отдельном потоке
+        bot_thread = threading.Thread(target=init_bot_async, daemon=True)
+        bot_thread.start()
+        
         from bot import app
         port = int(os.environ.get("PORT", 8080))
         print(f"🌐 Запуск сервера на порту {port}")

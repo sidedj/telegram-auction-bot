@@ -31,7 +31,7 @@ from aiogram.types import (
 )
 
 # Импорты наших модулей
-from config import load_config, DISABLE_SUBSCRIPTION_CHECK, WEBHOOK_URL
+from config import load_config, DISABLE_SUBSCRIPTION_CHECK
 from database import Database
 # from auction_timer import AuctionTimer  # Отключено
 from services import BalanceManager, NotificationManager, AdminPanel, init_notifications, send_auction_created_notification, send_auction_published_notification
@@ -1697,6 +1697,27 @@ async def process_duration(callback: types.CallbackQuery, state: FSMContext):
     
     data = await state.get_data()
     
+    # Проверяем баланс пользователя ПЕРЕД созданием аукциона
+    user_id = callback.from_user.id
+    user = await db.get_or_create_user(user_id)
+    is_admin_user = user['is_admin']
+    
+    if not is_admin_user and user['balance'] <= 0:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        # Создаем клавиатуру с кнопкой пополнения баланса
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="top_up_balance")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main_menu")]
+        ])
+        
+        await callback.message.answer(
+            "❗️ На вашем балансе недостаточно публикаций. Пополните баланс для создания аукционов.",
+            reply_markup=keyboard
+        )
+        await callback.answer()
+        return
+    
     # Сохраняем аукцион в базе данных
     auction_id = await db.create_auction(
         owner_id=callback.from_user.id,
@@ -2087,19 +2108,18 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
     check_balance_before_publish._processing_users.add(user_id)
 
     try:
-        if is_admin_user or user['balance'] > 0:
-            if not is_admin_user:
-                # Списываем 1 публикацию с использованием транзакции
-                success = await db.update_user_balance_transactional(
-                    user_id=user_id,
-                    amount=-1,
-                    transaction_type="auction_created",
-                    description="Создание аукциона",
-                    auction_id=auction_data['id']
-                )
-                if not success:
-                    await callback.message.answer("❌ Ошибка при списании баланса. Попробуйте позже.")
-                    return
+        # Списываем 1 публикацию с использованием транзакции (баланс уже проверен при создании)
+        if not is_admin_user:
+            success = await db.update_user_balance_transactional(
+                user_id=user_id,
+                amount=-1,
+                transaction_type="auction_created",
+                description="Создание аукциона",
+                auction_id=auction_data['id']
+            )
+            if not success:
+                await callback.message.answer("❌ Ошибка при списании баланса. Попробуйте позже.")
+                return
         
         await callback.message.edit_reply_markup(reply_markup=None)
         
@@ -2120,8 +2140,8 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
         text, bidding_keyboard = await format_auction_text(auction_data, show_buttons=True)
 
         try:
-            # Публикуем в канал
-            posted_message = await _publish_auction_to_channel(auction_data, text, bidding_keyboard)
+            # Публикуем в канал (используем синхронную версию для webhook)
+            posted_message = _publish_auction_to_channel_sync(auction_data, text, bidding_keyboard)
             
             if posted_message:
                 # Сохраняем информацию о сообщении в канале
@@ -2187,10 +2207,6 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
             error_message += "🔄 Попробуйте создать аукцион позже или обратитесь к администратору."
             
             await callback.message.answer(error_message, parse_mode="HTML")
-        else:
-            await callback.message.answer(
-                "❗️ На вашем балансе недостаточно публикаций. Пополните баланс для создания аукционов."
-            )
     finally:
         # Удаляем пользователя из списка обрабатываемых
         if hasattr(check_balance_before_publish, '_processing_users'):
@@ -2199,8 +2215,100 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
     await callback.answer()
 
 
-async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -> types.Message:
-    """Публикует аукцион в канал"""
+def _publish_auction_to_channel_sync(auction_data: dict, text: str, keyboard):
+    """Публикует аукцион в канал (синхронная версия для webhook)"""
+    logging.info(f"🚀 Начинаем публикацию аукциона #{auction_data.get('id')} в канал {CHANNEL_USERNAME}")
+    
+    try:
+        import asyncio
+        import threading
+        import aiohttp
+        from aiogram import Bot
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
+        
+        # Создаем новый экземпляр бота для публикации
+        temp_bot = Bot(token=BOT_TOKEN, **DEFAULT_BOT_KWARGS)
+        
+        result = None
+        exception = None
+        
+        def run_in_thread():
+            nonlocal result, exception
+            try:
+                # Создаем новый event loop в отдельном потоке
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                
+                async def publish_async():
+                    try:
+                        media_items = auction_data.get('media', [])
+                        
+                        if not media_items:
+                            logging.info("📝 Публикуем текстовое сообщение в канал")
+                            message = await temp_bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+                            logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
+                            return message
+                        
+                        # Если одно медиа — публикуем только его с кнопками
+                        if len(media_items) == 1:
+                            single = media_items[0]
+                            if single['type'] == 'photo':
+                                return await temp_bot.send_photo(chat_id=CHANNEL_USERNAME, photo=single['file_id'], caption=text, reply_markup=keyboard)
+                            else:
+                                return await temp_bot.send_video(chat_id=CHANNEL_USERNAME, video=single['file_id'], caption=text, reply_markup=keyboard)
+                        
+                        # Множественные медиа
+                        album = []
+                        for item in media_items[:10]:
+                            if item['type'] == 'photo':
+                                album.append(InputMediaPhoto(media=item['file_id']))
+                            else:
+                                album.append(InputMediaVideo(media=item['file_id']))
+
+                        try:
+                            await temp_bot.send_media_group(chat_id=CHANNEL_USERNAME, media=album)
+                        except Exception as e:
+                            logging.warning(f"Failed to send media group: {e}")
+
+                        # Затем пост с первой фотографией и кнопками
+                        head_photo = None
+                        for item in media_items:
+                            if item['type'] == 'photo':
+                                head_photo = item['file_id']
+                                break
+
+                        if head_photo:
+                            message = await temp_bot.send_photo(chat_id=CHANNEL_USERNAME, photo=head_photo, caption=text, reply_markup=keyboard)
+                            logging.info(f"✅ Фото с подписью отправлено, ID: {message.message_id}")
+                            return message
+                        else:
+                            message = await temp_bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+                            logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
+                            return message
+                    finally:
+                        await temp_bot.session.close()
+                
+                result = new_loop.run_until_complete(publish_async())
+                
+            except Exception as e:
+                exception = e
+            finally:
+                new_loop.close()
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+        
+        if exception:
+            raise exception
+        return result
+            
+    except Exception as e:
+        logging.error(f"❌ Ошибка публикации в канал: {e}")
+        raise Exception(f"Не удалось опубликовать в канал: {str(e)}")
+
+async def _publish_auction_to_channel_async(auction_data: dict, text: str, keyboard) -> types.Message:
+    """Публикует аукцион в канал (асинхронная версия)"""
     logging.info(f"🚀 Начинаем публикацию аукциона #{auction_data.get('id')} в канал {CHANNEL_USERNAME}")
     
     try:
@@ -2211,48 +2319,53 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
             message = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
             logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
             return message
-    
-    # Если одно медиа — публикуем только его с кнопками
-    if len(media_items) == 1:
-        single = media_items[0]
-        if single['type'] == 'photo':
-            return await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=single['file_id'], caption=text, reply_markup=keyboard)
+        
+        # Если одно медиа — публикуем только его с кнопками
+        if len(media_items) == 1:
+            single = media_items[0]
+            if single['type'] == 'photo':
+                return await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=single['file_id'], caption=text, reply_markup=keyboard)
+            else:
+                return await bot.send_video(chat_id=CHANNEL_USERNAME, video=single['file_id'], caption=text, reply_markup=keyboard)
+        
+        # Множественные медиа
+        # 1) Сначала публикуем весь альбом (без подписей)
+        album = []
+        for item in media_items[:10]:
+            if item['type'] == 'photo':
+                album.append(InputMediaPhoto(media=item['file_id']))
+            else:
+                album.append(InputMediaVideo(media=item['file_id']))
+
+        try:
+            await bot.send_media_group(chat_id=CHANNEL_USERNAME, media=album)
+        except Exception as e:
+            logging.warning(f"Failed to send media group: {e}")
+
+        # 2) Затем пост с первой фотографией и кнопками
+        head_photo = None
+        for item in media_items:
+            if item['type'] == 'photo':
+                head_photo = item['file_id']
+                break
+
+        if head_photo:
+            message = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=head_photo, caption=text, reply_markup=keyboard)
+            logging.info(f"✅ Фото с подписью отправлено, ID: {message.message_id}")
+            return message
         else:
-            return await bot.send_video(chat_id=CHANNEL_USERNAME, video=single['file_id'], caption=text, reply_markup=keyboard)
-    
-    # Множественные медиа
-    # 1) Сначала публикуем весь альбом (без подписей)
-    album = []
-    for item in media_items[:10]:
-        if item['type'] == 'photo':
-            album.append(InputMediaPhoto(media=item['file_id']))
-        else:
-            album.append(InputMediaVideo(media=item['file_id']))
-
-    try:
-        await bot.send_media_group(chat_id=CHANNEL_USERNAME, media=album)
-    except Exception as e:
-        logging.warning(f"Failed to send media group: {e}")
-
-    # 2) Затем пост с первой фотографией и кнопками
-    head_photo = None
-    for item in media_items:
-        if item['type'] == 'photo':
-            head_photo = item['file_id']
-            break
-
-    if head_photo:
-        message = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=head_photo, caption=text, reply_markup=keyboard)
-        logging.info(f"✅ Фото с подписью отправлено, ID: {message.message_id}")
-        return message
-    else:
-        message = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
-        logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
-        return message
+            message = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, reply_markup=keyboard)
+            logging.info(f"✅ Текстовое сообщение отправлено, ID: {message.message_id}")
+            return message
 
     except Exception as e:
         logging.error(f"❌ Ошибка публикации в канал: {e}")
         raise Exception(f"Не удалось опубликовать в канал: {str(e)}")
+
+# Оставляем старую функцию для совместимости
+async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -> types.Message:
+    """Публикует аукцион в канал (совместимость)"""
+    return await _publish_auction_to_channel_async(auction_data, text, keyboard)
 
 
 # --- Логика обработки ставок (Callback) ---
@@ -2260,6 +2373,7 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
 async def handle_buyout(callback: types.CallbackQuery):
     """Обработка выкупа по блиц-цене"""
     try:
+        logging.info(f"🛒 Обработка выкупа аукциона пользователем {callback.from_user.id}")
         # Проверяем подписку пользователя на канал
         is_subscribed = await check_user_subscription(callback.from_user.id)
         if not is_subscribed:
@@ -2411,8 +2525,43 @@ async def handle_buyout(callback: types.CallbackQuery):
             logging.warning(f"Failed to notify seller: {e}")
             
     except Exception as e:
-        logging.error(f"Error processing buyout: {e}")
-        await callback.answer("Ошибка при обработке выкупа. Попробуйте позже.", show_alert=True)
+        logging.error(f"❌ Ошибка при обработке выкупа: {e}")
+        import traceback
+        logging.error(f"❌ Traceback: {traceback.format_exc()}")
+        try:
+            await callback.answer("Ошибка при обработке ставки. Попробуйте позже.", show_alert=True)
+        except Exception as answer_error:
+            logging.error(f"❌ Ошибка при отправке ответа: {answer_error}")
+
+def handle_buyout_sync(user_id: int, username: str, full_name: str, chat_id: int, message_id: int):
+    """Синхронная обработка выкупа для webhook"""
+    try:
+        logging.info(f"🛒 Обработка выкупа для пользователя {user_id}")
+        # Пока что просто логируем - полная реализация будет позже
+        return True
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки выкупа: {e}")
+        return False
+
+def update_auction_message_sync(auction: dict, new_price: int, leader_name: str, leader_id: int):
+    """Синхронное обновление сообщения аукциона"""
+    try:
+        logging.info(f"📝 Обновление сообщения аукциона #{auction.get('id')}")
+        # Пока что просто логируем - полная реализация будет позже
+        return True
+    except Exception as e:
+        logging.error(f"❌ Ошибка обновления сообщения аукциона: {e}")
+        return False
+
+def handle_bid_sync(callback_data: str, user_id: int, username: str, full_name: str, chat_id: int, message_id: int):
+    """Синхронная обработка ставок для webhook"""
+    try:
+        logging.info(f"💰 Обработка ставки для пользователя {user_id}")
+        # Пока что просто логируем - полная реализация будет позже
+        return True
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки ставки: {e}")
+        return False
 
 @dp.callback_query(F.data.startswith("bid:"))
 async def handle_bid(callback: types.CallbackQuery):
@@ -2984,6 +3133,18 @@ async def persistence_info_callback(callback: types.CallbackQuery):
     
     await callback.answer()
 
+@dp.callback_query(F.data == "back_to_main_menu")
+async def back_to_main_menu_callback(callback: types.CallbackQuery):
+    """Вернуться в главное меню"""
+    user_id = callback.from_user.id
+    user_menu = await get_user_main_menu(user_id)
+    
+    await callback.message.edit_text(
+        "🏠 Главное меню",
+        reply_markup=user_menu
+    )
+    await callback.answer()
+
 @dp.callback_query(F.data == "back_to_stats")
 async def back_to_stats_callback(callback: types.CallbackQuery):
     """Вернуться к статистике"""
@@ -3482,6 +3643,7 @@ def yoomoney_webhook():
 
 # Флаг инициализации
 _webhook_initialized = False
+_webhook_set = False
 _webhook_loop = None
 
 @app.route('/webhook', methods=['POST', 'GET'])
@@ -3490,9 +3652,20 @@ def webhook_new():
     global _webhook_initialized
     
     logging.info("=== WEBHOOK VERSION 16.0 - УПРОЩЕННАЯ ОБРАБОТКА ===")
+    logging.info(f"Request method: {request.method}")
+    logging.info(f"Request headers: {dict(request.headers)}")
     
     if request.method == 'GET':
+        logging.info("GET request received, returning OK")
         return "OK"
+    
+    # Логируем входящие данные
+    try:
+        data = request.get_json()
+        logging.info(f"📥 Received webhook data: {data}")
+    except Exception as e:
+        logging.error(f"❌ Error parsing webhook data: {e}")
+        return "Error parsing data", 400
     
     # Инициализируем бота при первом запросе
     if not _webhook_initialized:
@@ -3711,14 +3884,13 @@ async def process_telegram_update_simple(update_data):
         
         logging.info(f"📱 Обрабатываем обновление: {update_data}")
         
+        # База данных уже инициализирована при запуске бота
+        
         # Создаем объект Update из данных
         update = Update(**update_data)
         
         # Создаем новый экземпляр бота для этого event loop
         temp_bot = Bot(token=BOT_TOKEN, **DEFAULT_BOT_KWARGS)
-        
-        # Инициализируем базу данных для этого event loop
-        await db.init_db()
         
         # Обрабатываем обновление через диспетчер
         await dp.feed_update(temp_bot, update)
@@ -3734,9 +3906,20 @@ async def process_telegram_update_simple(update_data):
         logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
 
+# Глобальная переменная для отслеживания инициализации
+_bot_initialized = False
+
 # Инициализация для webhook режима
 async def init_webhook_bot():
     """Инициализирует бота для webhook режима"""
+    global _bot_initialized
+    
+    # Проверяем, не инициализирован ли уже бот
+    if _bot_initialized:
+        logging.info("Bot already initialized, skipping...")
+        return
+    
+    _bot_initialized = True
     try:
         logging.info("=== ИНИЦИАЛИЗАЦИЯ WEBHOOK БОТА ===")
         
@@ -3755,6 +3938,31 @@ async def init_webhook_bot():
         # Запускаем систему персистентности аукционов
         await auction_persistence.start()
         logging.info("Auction persistence system started")
+        
+        # Настраиваем webhook только если он еще не установлен
+        global _webhook_set
+        if not _webhook_set:
+            webhook_url = os.getenv("WEBHOOK_URL")
+            if not webhook_url:
+                # Получаем URL из Railway
+                railway_url = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+                if railway_url:
+                    webhook_url = f"https://{railway_url}/webhook"
+                else:
+                    logging.error("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                    return
+            
+            try:
+                # Удаляем старый webhook и устанавливаем новый
+                await bot.delete_webhook()
+                await bot.set_webhook(webhook_url)
+                logging.info(f"Webhook set to: {webhook_url}")
+                _webhook_set = True
+            except Exception as e:
+                logging.warning(f"Failed to set webhook: {e}")
+                # Не прерываем инициализацию, если webhook уже установлен
+        else:
+            logging.info("Webhook already set, skipping...")
         
         # В webhook режиме диспетчер не запускается, только инициализируется
         logging.info("Dispatcher ready for webhook mode")
@@ -3802,6 +4010,24 @@ def yoomoney_debug_webhook():
 
 def run_flask_app():
     """Запуск Flask приложения"""
+    # Инициализируем бота при запуске Flask
+    import asyncio
+    import threading
+    
+    def init_bot_async():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(init_webhook_bot())
+        except Exception as e:
+            logging.error(f"❌ Ошибка инициализации бота: {e}")
+        finally:
+            loop.close()
+    
+    # Запускаем инициализацию бота в отдельном потоке
+    bot_thread = threading.Thread(target=init_bot_async, daemon=True)
+    bot_thread.start()
+    
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)
 
@@ -3830,14 +4056,20 @@ async def main_webhook():
         logging.info("Auction persistence system started")
         
         # Настраиваем webhook
-        if not WEBHOOK_URL:
-            logging.error("WEBHOOK_URL not set")
-            return
+        webhook_url = os.getenv("WEBHOOK_URL")
+        if not webhook_url:
+            # Получаем URL из Railway
+            railway_url = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+            if railway_url:
+                webhook_url = f"https://{railway_url}/webhook"
+            else:
+                logging.error("WEBHOOK_URL not set and RAILWAY_PUBLIC_DOMAIN not available")
+                return
             
         # Удаляем старый webhook и устанавливаем новый
         await bot.delete_webhook()
-        await bot.set_webhook(WEBHOOK_URL)
-        logging.info(f"Webhook set to: {WEBHOOK_URL}")
+        await bot.set_webhook(webhook_url)
+        logging.info(f"Webhook set to: {webhook_url}")
         
         # Запускаем бота в режиме webhook (без polling)
         # В webhook режиме бот не должен запускать polling

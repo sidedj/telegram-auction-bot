@@ -65,8 +65,16 @@ class AuctionPersistence:
             asyncio.create_task(self.save_state())
             sys.exit(0)
         
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        try:
+            # Проверяем, что мы в главном потоке
+            import threading
+            if threading.current_thread() is threading.main_thread():
+                signal.signal(signal.SIGINT, signal_handler)
+                signal.signal(signal.SIGTERM, signal_handler)
+            else:
+                logging.warning("Cannot register signal handlers in non-main thread")
+        except Exception as e:
+            logging.warning(f"Cannot register signal handlers: {e}")
     
     async def _periodic_save(self):
         """Периодическое сохранение состояния каждые 5 минут"""
