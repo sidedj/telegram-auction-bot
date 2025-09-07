@@ -104,6 +104,9 @@ class Database:
 
     async def get_or_create_user(self, user_id: int, username: str = None, full_name: str = None) -> Dict:
         """Получить или создать пользователя"""
+        # Импортируем конфигурацию для проверки администраторов
+        from config import ADMIN_USER_IDS
+        
         async with aiosqlite.connect(self.db_path) as db:
             # Проверяем существование пользователя
             cursor = await db.execute(
@@ -112,19 +115,24 @@ class Database:
             user = await cursor.fetchone()
             
             if user:
+                # Проверяем, является ли пользователь администратором из конфигурации
+                is_admin = bool(user[5]) or user_id in ADMIN_USER_IDS
                 return {
                     'user_id': user[0],
                     'username': user[1],
                     'full_name': user[2],
                     'balance': user[3],
                     'created_at': user[4],
-                    'is_admin': bool(user[5])
+                    'is_admin': is_admin
                 }
             else:
+                # Проверяем, является ли пользователь администратором из конфигурации
+                is_admin = user_id in ADMIN_USER_IDS
+                
                 # Создаем нового пользователя
                 await db.execute(
-                    "INSERT INTO users (user_id, username, full_name, balance) VALUES (?, ?, ?, ?)",
-                    (user_id, username, full_name, 0)
+                    "INSERT INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, username, full_name, 0, is_admin)
                 )
                 await db.commit()
                 
@@ -134,7 +142,7 @@ class Database:
                     'full_name': full_name,
                     'balance': 0,
                     'created_at': datetime.now(),
-                    'is_admin': False
+                    'is_admin': is_admin
                 }
 
     async def update_user_balance(self, user_id: int, amount: int, transaction_type: str, description: str = None) -> bool:
