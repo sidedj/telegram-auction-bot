@@ -157,7 +157,7 @@ auction-bot/
 - **10 публикаций** - 350₽
 - **20 публикаций** - 600₽
 
-> 📋 Подробная инструкция: [YOOMONEY_WEBHOOK_SETUP.md](YOOMONEY_WEBHOOK_SETUP.md)
+> 📋 Подробная инструкция: [PAYMENT_SETUP.md](PAYMENT_SETUP.md)
 
 ## 🚀 Развертывание
 
