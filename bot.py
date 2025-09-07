@@ -2663,23 +2663,25 @@ async def handle_bid(callback: types.CallbackQuery):
         # Форматируем новый текст
         text, keyboard = await format_auction_text(updated_auction, show_buttons=True)
         
-        # Обновляем сообщение
-        if callback.message.caption is not None:
-            await bot.edit_message_caption(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                caption=text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
-        else:
-            await bot.edit_message_text(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
+        # Обновляем сообщение используя экземпляр бота из callback
+        try:
+            if callback.message.caption is not None:
+                await callback.message.edit_caption(
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            else:
+                await callback.message.edit_text(
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            logging.error(f"❌ Ошибка обновления сообщения: {e}")
+            # Если не удалось обновить сообщение, просто отвечаем пользователю
+            await callback.answer(f"Ставка {new_price} ₽ принята, но не удалось обновить сообщение в канале.")
+            return
         
         await callback.answer(f"Ваша ставка {new_price} ₽ принята!")
         logging.info(f"✅ Ставка {new_price} ₽ успешно обработана для аукциона #{auction['id']}")
