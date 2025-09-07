@@ -1,1 +1,1 @@
-web: python launcher.py webhook
+web: python bot.py
