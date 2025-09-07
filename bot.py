@@ -3105,9 +3105,23 @@ def yoomoney_webhook():
     # Возвращаем OK
     return "OK"
 
+# Флаг инициализации
+_webhook_initialized = False
+
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook_new():
     """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
+    global _webhook_initialized
+    
+    # Инициализируем бота при первом запросе
+    if not _webhook_initialized:
+        try:
+            import asyncio
+            asyncio.create_task(init_webhook_bot())
+            _webhook_initialized = True
+        except Exception as e:
+            logging.error(f"❌ Ошибка инициализации: {e}")
+    
     logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
     
     if request.method == 'GET':
@@ -3292,9 +3306,7 @@ async def init_webhook_bot():
     except Exception as e:
         logging.error(f"❌ Ошибка инициализации webhook бота: {e}")
 
-# Запускаем инициализацию при импорте модуля
-import asyncio
-asyncio.create_task(init_webhook_bot())
+# Инициализация будет запущена при первом запросе к webhook
 
 @app.route('/yoomoney_debug', methods=['POST', 'GET'])
 def yoomoney_debug_webhook():
