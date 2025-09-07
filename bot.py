@@ -3113,19 +3113,27 @@ def webhook_new():
     """Новый webhook - обрабатывает все платежи и сообщения Telegram"""
     global _webhook_initialized
     
-    # Инициализируем бота при первом запросе
-    if not _webhook_initialized:
-        try:
-            import asyncio
-            asyncio.create_task(init_webhook_bot())
-            _webhook_initialized = True
-        except Exception as e:
-            logging.error(f"❌ Ошибка инициализации: {e}")
-    
     logging.info("=== WEBHOOK VERSION 15.0 - ВСЕ ПЛАТЕЖИ И СООБЩЕНИЯ ===")
     
     if request.method == 'GET':
         return "OK"
+    
+    # Инициализируем бота при первом запросе
+    if not _webhook_initialized:
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(init_webhook_bot())
+                _webhook_initialized = True
+                logging.info("✅ Webhook бот инициализирован")
+            finally:
+                loop.close()
+        except Exception as e:
+            logging.error(f"❌ Ошибка инициализации: {e}")
+            import traceback
+            logging.error(f"❌ Traceback: {traceback.format_exc()}")
     
     # Проверяем, это сообщение от Telegram или платеж
     content_type = request.content_type
