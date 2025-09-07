@@ -1863,8 +1863,19 @@ async def _publish_auction_to_channel(auction_data: dict, text: str, keyboard) -
         # Проверяем права бота в канале
         try:
             chat_member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=bot.id)
+            logging.info(f"🔍 Статус бота в канале: {chat_member.status}")
+            logging.info(f"🔍 Права бота: {chat_member.privileges}")
+            
             if chat_member.status not in ['administrator', 'creator']:
                 raise Exception(f"Бот не является администратором канала. Статус: {chat_member.status}")
+            
+            # Проверяем права на отправку сообщений
+            if hasattr(chat_member, 'privileges') and chat_member.privileges:
+                if not chat_member.privileges.can_post_messages:
+                    logging.warning("⚠️ У бота нет прав на публикацию постов в канале")
+                if not chat_member.privileges.can_send_messages:
+                    logging.warning("⚠️ У бота нет прав на отправку сообщений в канале")
+                    
         except Exception as e:
             logging.error(f"❌ Ошибка проверки прав бота в канале: {e}")
             raise Exception("Бот не добавлен в канал или не имеет прав администратора")
