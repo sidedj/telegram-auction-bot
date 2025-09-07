@@ -81,12 +81,20 @@ def start_webhook_server():
         import gunicorn.app.wsgiapp as wsgi
         sys.argv = ['gunicorn', '--bind', f'0.0.0.0:{port}', '--workers', '1', '--timeout', '120', 'bot:app']
         wsgi.run()
-    except ImportError:
+    except ImportError as e:
         # Если gunicorn не установлен, используем Flask
-        print("⚠️ Gunicorn не найден, используем Flask (не рекомендуется для production)")
-        app.run(host="0.0.0.0", port=port, debug=False)
+        print(f"⚠️ Gunicorn не найден: {e}")
+        print("⚠️ Используем Flask (не рекомендуется для production)")
+        try:
+            from bot import app
+            port = int(os.environ.get("PORT", 8080))
+            app.run(host="0.0.0.0", port=port, debug=False)
+        except Exception as flask_error:
+            print(f"❌ Ошибка запуска Flask: {flask_error}")
+            sys.exit(1)
     except Exception as e:
         print(f"❌ Ошибка запуска webhook сервера: {e}")
+        sys.exit(1)
 
 def start_with_persistence():
     """Запуск бота с системой персистентности"""
