@@ -2455,20 +2455,22 @@ async def handle_buyout(callback: types.CallbackQuery):
         new_text += f"<b>Покупатель:</b> {buyer_link}"
         
         # Обновляем сообщение без кнопки истории ставок
-        if callback.message.caption is not None:
-            await bot.edit_message_caption(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                caption=new_text,
-                parse_mode="HTML"
-            )
-        else:
-            await bot.edit_message_text(
-                chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
-                text=new_text,
-                parse_mode="HTML"
-            )
+        try:
+            if callback.message.caption is not None:
+                await callback.message.edit_caption(
+                    caption=new_text,
+                    parse_mode="HTML"
+                )
+            else:
+                await callback.message.edit_text(
+                    text=new_text,
+                    parse_mode="HTML"
+                )
+        except Exception as e:
+            logging.error(f"❌ Ошибка обновления сообщения при выкупе: {e}")
+            # Если не удалось обновить сообщение, просто отвечаем пользователю
+            await callback.answer("Товар выкуплен по блиц-цене, но не удалось обновить сообщение в канале!")
+            return
         
         await callback.answer("Товар выкуплен по блиц-цене!")
         
