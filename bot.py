@@ -3179,7 +3179,7 @@ def webhook_new():
                 
             logging.info(f"📱 Получено сообщение от Telegram: {data}")
             
-            # Обрабатываем сообщение напрямую без создания нового event loop
+            # Обрабатываем сообщение через диспетчер
             import asyncio
             import threading
             
@@ -3330,7 +3330,7 @@ def webhook_new():
 async def process_telegram_update_simple(update_data):
     """Упрощенная обработка обновлений от Telegram"""
     try:
-        from aiogram.types import Update, Message, CallbackQuery, PreCheckoutQuery
+        from aiogram.types import Update
         from aiogram import Bot
         import asyncio
         
@@ -3345,13 +3345,8 @@ async def process_telegram_update_simple(update_data):
         # Инициализируем базу данных для этого event loop
         await db.init_db()
         
-        # Обрабатываем сообщения напрямую
-        if update.message:
-            await handle_message_direct(temp_bot, update.message)
-        elif update.callback_query:
-            await handle_callback_direct(temp_bot, update.callback_query)
-        elif update.pre_checkout_query:
-            await handle_pre_checkout_direct(temp_bot, update.pre_checkout_query)
+        # Обрабатываем обновление через диспетчер
+        await dp.feed_update(temp_bot, update)
         
         # Закрываем сессию бота
         await temp_bot.session.close()
@@ -3363,93 +3358,6 @@ async def process_telegram_update_simple(update_data):
         import traceback
         logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
-def get_fsm_state(message):
-    """Получает состояние FSM для сообщения"""
-    from aiogram.fsm.context import FSMContext
-    from aiogram.fsm.storage.base import StorageKey
-    # Создаем ключ для FSM
-    key = StorageKey(chat_id=message.chat.id, user_id=message.from_user.id, bot_id=bot.id)
-    return FSMContext(storage=dp.storage, key=key)
-
-async def handle_message_direct(bot: Bot, message):
-    """Прямая обработка сообщений"""
-    try:
-        from aiogram.types import Update
-        
-        # Проверяем команды
-        if message.text:
-            if message.text.startswith('/start'):
-                state = get_fsm_state(message)
-                await cmd_start(message, state)
-            elif message.text.startswith('/update_admin'):
-                await update_admin_command(message)
-            elif message.text.startswith('/check_admin'):
-                await check_admin_command(message)
-            elif message.text.startswith('/add_balance'):
-                await add_balance_command(message)
-            elif message.text.startswith('/sync_payments'):
-                await sync_payments_command(message)
-            elif message.text.startswith('/manual_payment'):
-                await manual_payment_command(message)
-            elif message.text.startswith('/check_payment'):
-                await check_payment_command(message)
-            elif message.text.startswith('/payment_status'):
-                await payment_status_command(message)
-            elif message.text == "Мои аукционы 📦":
-                await my_auctions(message)
-            elif message.text == "📊 Статистика":
-                await statistics(message)
-            elif message.text.startswith("Пополнить баланс 💳"):
-                await top_up_balance(message)
-            elif message.text == "Создать аукцион 🚀":
-                state = get_fsm_state(message)
-                await start_auction_creation(message, state)
-            elif message.text.lower() == "отмена":
-                state = get_fsm_state(message)
-                await cancel_handler(message, state)
-            elif message.text.startswith("/remove_balance"):
-                await remove_balance_command(message)
-            elif message.text == "/persistence_info":
-                await persistence_info_command(message)
-            elif message.text == "/grant_admin":
-                await grant_admin_command(message)
-            elif message.text == "/fix_admin":
-                await fix_admin_command(message)
-            else:
-                # Обрабатываем как обычное сообщение через FSM
-                await dp.feed_update(bot, Update(update_id=0, message=message))
-        
-        # Обрабатываем медиа через FSM
-        elif message.photo or message.video or message.document:
-            # Для медиа сообщений используем диспетчер, так как они могут быть в FSM состоянии
-            await dp.feed_update(bot, Update(update_id=0, message=message))
-            
-    except Exception as e:
-        logging.error(f"❌ Ошибка обработки сообщения: {e}")
-        import traceback
-        logging.error(f"❌ Traceback: {traceback.format_exc()}")
-
-async def handle_callback_direct(bot: Bot, callback):
-    """Прямая обработка callback запросов"""
-    try:
-        from aiogram.types import Update
-        # Обрабатываем через диспетчер
-        await dp.feed_update(bot, Update(update_id=0, callback_query=callback))
-    except Exception as e:
-        logging.error(f"❌ Ошибка обработки callback: {e}")
-        import traceback
-        logging.error(f"❌ Traceback: {traceback.format_exc()}")
-
-async def handle_pre_checkout_direct(bot: Bot, pre_checkout):
-    """Прямая обработка pre-checkout запросов"""
-    try:
-        from aiogram.types import Update
-        # Обрабатываем через диспетчер
-        await dp.feed_update(bot, Update(update_id=0, pre_checkout_query=pre_checkout))
-    except Exception as e:
-        logging.error(f"❌ Ошибка обработки pre-checkout: {e}")
-        import traceback
-        logging.error(f"❌ Traceback: {traceback.format_exc()}")
 
 # Инициализация для webhook режима
 async def init_webhook_bot():
