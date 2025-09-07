@@ -1,9 +1,10 @@
-# Файл: timezone_utils.py
-# Утилиты для работы с московским временем
+# Файл: utils.py
+# Утилиты для работы с временем и общие функции
 
 import pytz
 from datetime import datetime, timedelta
 from typing import Optional
+import re
 
 # Московский часовой пояс
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
@@ -64,3 +65,24 @@ def format_time_left(delta: timedelta) -> str:
 def now() -> datetime:
     """Получить текущее московское время (без информации о часовом поясе)"""
     return get_moscow_time_naive()
+
+def filter_description(description: str) -> tuple[str, bool]:
+    """
+    Фильтрует описание аукциона от вредных ссылок и @ упоминаний
+    Возвращает (отфильтрованное_описание, есть_ли_изменения)
+    """
+    original = description
+    
+    # Удаляем @ упоминания
+    description = re.sub(r'@\w+', '', description)
+    
+    # Удаляем вредные ссылки (http, https, www, t.me, telegram.me)
+    description = re.sub(r'https?://[^\s]+', '', description)
+    description = re.sub(r'www\.[^\s]+', '', description)
+    description = re.sub(r't\.me/[^\s]+', '', description)
+    description = re.sub(r'telegram\.me/[^\s]+', '', description)
+    
+    # Удаляем множественные пробелы
+    description = re.sub(r'\s+', ' ', description).strip()
+    
+    return description, description != original

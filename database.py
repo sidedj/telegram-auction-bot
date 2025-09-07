@@ -423,6 +423,15 @@ class Database:
             )
             await db.commit()
 
+    async def update_auction_channel_message(self, auction_id: int, channel_message_id: int, channel_chat_id: int):
+        """Обновить информацию о сообщении в канале"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE auctions SET channel_message_id = ?, channel_chat_id = ? WHERE id = ?",
+                (channel_message_id, channel_chat_id, auction_id)
+            )
+            await db.commit()
+
     async def get_auction_by_channel_message(self, chat_id: int, message_id: int) -> Optional[Dict]:
         """Получить аукцион по сообщению в канале"""
         async with aiosqlite.connect(self.db_path) as db:

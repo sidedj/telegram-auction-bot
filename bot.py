@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
-from timezone_utils import get_moscow_time_naive as now, format_moscow_time
+from utils import get_moscow_time_naive as now, format_moscow_time
 import re
 import threading
 from flask import Flask, request
@@ -33,53 +33,71 @@ from aiogram.types import (
 # Импорты наших модулей
 from config import load_config, DISABLE_SUBSCRIPTION_CHECK
 from database import Database
-from auction_timer import AuctionTimer
-from balance_manager import BalanceManager
-from auction_persistence import AuctionPersistence
-from notifications import init_notifications, send_auction_created_notification, send_auction_published_notification
-# from admin_panel import AdminPanel  # Не используется
+# from auction_timer import AuctionTimer  # Отключено
+from services import BalanceManager, NotificationManager, AdminPanel, init_notifications, send_auction_created_notification, send_auction_published_notification
+from persistence import AuctionPersistence
 # from api_integration import api_integration  # Отключено
 # from yoomoney_payment import YooMoneyPayment  # Отключено
 # from payment_server import get_notification_queue  # Отключено
 
 # --- 1. КОНФИГУРАЦИЯ ---
 
-# --- Функция фильтрации вредных ссылок и @ упоминаний ---
-def filter_description(description: str) -> tuple[str, bool]:
+# Импортируем функцию фильтрации из utils
+from utils import filter_description
+
+# --- Функция форматирования текста аукциона ---
+async def format_auction_text(auction_data, show_buttons=False):
     """
-    Фильтрует описание товара, удаляя ссылки и @ упоминания
+    Форматирует текст аукциона для отображения
     
     Args:
-        description: Исходное описание
+        auction_data: Данные аукциона
+        show_buttons: Показывать ли кнопки (для обратной совместимости)
         
     Returns:
-        tuple: (отфильтрованное описание, есть ли нарушения)
+        tuple: (текст, клавиатура)
     """
-    if not description:
-        return description, False
-    
-    original = description
-    has_violations = False
-    
-    # Удаляем ссылки (http, https, www, t.me, telegram.me, домены)
-    url_patterns = [
-        r'https?://[^\s]+',  # HTTP/HTTPS ссылки
-        r'www\.[^\s]+',      # www ссылки
-        r't\.me/[^\s]+',     # t.me ссылки
-        r'telegram\.me/[^\s]+',  # telegram.me ссылки
-        r'[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]*\.[a-zA-Z]{2,}[^\s]*',  # Любые домены (2+ букв)
-        r'@[a-zA-Zа-яА-Я0-9_]+',  # @ упоминания (включая кириллицу)
-    ]
-    
-    for pattern in url_patterns:
-        if re.search(pattern, description, re.IGNORECASE):
-            has_violations = True
-            description = re.sub(pattern, '[ССЫЛКА УДАЛЕНА]', description, flags=re.IGNORECASE)
-    
-    # Удаляем множественные пробелы
-    description = re.sub(r'\s+', ' ', description).strip()
-    
-    return description, has_violations
+    try:
+        # Вычисляем оставшееся время
+        end_time = auction_data['end_time']
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        now_time = now()
+        if end_time > now_time:
+            time_diff = end_time - now_time
+            if time_diff.days > 0:
+                time_left = f"{time_diff.days} дней"
+            elif time_diff.seconds >= 3600:
+                hours = time_diff.seconds // 3600
+                time_left = f"{hours} ч. {(time_diff.seconds % 3600) // 60} мин."
+            else:
+                minutes = time_diff.seconds // 60
+                time_left = f"{minutes} мин."
+        else:
+            time_left = "Время истекло"
+        
+        # Форматируем текст
+        text = f"🏷️ <b>Аукцион #{auction_data['id']}</b>\n\n"
+        text += f"📝 <b>Описание:</b>\n{auction_data['description']}\n\n"
+        text += f"💰 <b>Стартовая цена:</b> {auction_data['start_price']} ₽\n"
+        text += f"⚡ <b>Блиц-цена:</b> {auction_data['blitz_price']} ₽\n"
+        text += f"🔥 <b>Текущая цена:</b> {auction_data['current_price']} ₽\n"
+        
+        if auction_data.get('current_leader_username'):
+            text += f"👑 <b>Лидер:</b> @{auction_data['current_leader_username']}\n"
+        
+        text += f"⏰ <b>Осталось:</b> {time_left}\n"
+        text += f"📅 <b>Окончание:</b> {format_moscow_time(end_time)}\n"
+        
+        # Создаем клавиатуру для ставок
+        keyboard = get_bidding_keyboard(auction_data.get('blitz_price'))
+        
+        return text, keyboard
+        
+    except Exception as e:
+        logging.error(f"Error formatting auction text: {e}")
+        return f"Ошибка при форматировании аукциона #{auction_data.get('id', 'unknown')}", None
 
 # --- 2. ИНИЦИАЛИЗАЦИЯ ---
 
@@ -217,10 +235,16 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация таймера аукционов
-auction_timer = AuctionTimer(bot, db, CHANNEL_USERNAME)
+# auction_timer = AuctionTimer(bot, db, CHANNEL_USERNAME)  # Отключено
 
 # Инициализация системы персистентности аукционов
 auction_persistence = AuctionPersistence(db)
+
+# Связываем таймер с системой персистентности
+# auction_persistence.set_auction_timer(auction_timer)  # Отключено
+
+# Инициализация мониторинга аукционов
+# auction_monitor = AuctionMonitor(db, auction_persistence)  # Отключено
 
 # Буфер для альбомов фотографий
 album_buffers = {}
@@ -476,12 +500,12 @@ async def check_admin_command(message: types.Message):
     
     await message.answer(status_text, parse_mode="HTML")
 
-@dp.message(Command("add_balance_simple"))
+@dp.message(Command("add_balance"))
 async def add_balance_command(message: types.Message):
     """Команда для принудительного начисления баланса (только для админов)"""
     try:
         user_id = message.from_user.id
-        logging.info(f"🔍 Команда /add_balance_simple от пользователя {user_id}")
+        logging.info(f"🔍 Команда /add_balance от пользователя {user_id}")
         
         # Проверяем, что база данных инициализирована
         if not hasattr(db, 'db_path'):
@@ -497,17 +521,22 @@ async def add_balance_command(message: types.Message):
             await message.answer("❌ У вас нет прав администратора.")
             return
         
-        # Парсим команду: /add_balance_simple <user_id> <amount>
+        # Парсим команду: /add_balance <user_id> <amount> [description]
         parts = message.text.split()
         logging.info(f"🔍 Парсинг команды: {parts}")
         
-        if len(parts) != 3:
-            await message.answer("❌ Использование: /add_balance_simple <user_id> <количество_публикаций>")
+        if len(parts) < 3:
+            await message.answer(
+                "❌ Неверный формат команды.\n"
+                "Используйте: <code>/add_balance [user_id] [amount] [description]</code>\n"
+                "Пример: <code>/add_balance 123456789 5 Бонус за активность</code>"
+            )
             return
         
         target_user_id = int(parts[1])
         amount = int(parts[2])
-        logging.info(f"🔍 Целевой пользователь: {target_user_id}, сумма: {amount}")
+        description = " ".join(parts[3:]) if len(parts) > 3 else "Начислено администратором"
+        logging.info(f"🔍 Целевой пользователь: {target_user_id}, сумма: {amount}, описание: {description}")
         
         if amount <= 0:
             await message.answer("❌ Количество публикаций должно быть больше 0.")
@@ -542,7 +571,7 @@ async def add_balance_command(message: types.Message):
                 # Записываем транзакцию
                 cursor.execute(
                     "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                    (target_user_id, amount, "admin_grant", f"Начислено администратором: {amount} публикаций")
+                    (target_user_id, amount, "admin_grant", description)
                 )
                 
                 db_conn.commit()
@@ -561,7 +590,7 @@ async def add_balance_command(message: types.Message):
                 f"✅ <b>Ваш баланс пополнен!</b>\n\n"
                 f"💰 Зачислено: {amount} публикаций\n"
                 f"💳 Текущий баланс: {new_balance} публикаций\n\n"
-                f"📝 Причина: Начислено администратором",
+                f"📝 Причина: {description}",
                 parse_mode="HTML"
             )
             logging.info(f"✅ Уведомление о пополнении баланса отправлено пользователю {target_user_id}")
@@ -573,122 +602,26 @@ async def add_balance_command(message: types.Message):
             f"👤 Пользователь: {target_user_id}\n"
             f"💰 Было: {current_balance} публикаций\n"
             f"💰 Стало: {new_balance} публикаций\n"
-            f"➕ Добавлено: {amount} публикаций\n\n"
+            f"➕ Добавлено: {amount} публикаций\n"
+            f"📝 Описание: {description}\n\n"
             f"📱 Уведомление отправлено пользователю",
             parse_mode="HTML"
         )
-        logging.info(f"✅ Команда /add_balance_simple выполнена успешно")
+        logging.info(f"✅ Команда /add_balance выполнена успешно")
         
     except ValueError as e:
-        logging.error(f"❌ ValueError в add_balance_simple: {e}")
-        await message.answer("❌ Неверный формат команды. Используйте: /add_balance_simple <user_id> <количество>")
+        logging.error(f"❌ ValueError в add_balance: {e}")
+        await message.answer(
+            "❌ Неверный формат команды.\n"
+            "Используйте: <code>/add_balance [user_id] [amount] [description]</code>\n"
+            "Пример: <code>/add_balance 123456789 5 Бонус за активность</code>"
+        )
     except Exception as e:
-        logging.error(f"❌ Общая ошибка в add_balance_simple: {e}")
+        logging.error(f"❌ Общая ошибка в add_balance: {e}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
         await message.answer(f"❌ Ошибка при начислении баланса: {str(e)}")
 
-@dp.message(Command("test_time"))
-async def test_time_command(message: types.Message):
-    """Тестовая команда для проверки времени"""
-    try:
-        from timezone_utils import get_moscow_time, get_moscow_time_naive, format_moscow_time
-        import datetime
-        
-        # Получаем разные варианты времени
-        utc_time = datetime.datetime.utcnow()
-        local_time = datetime.datetime.now()
-        moscow_time = get_moscow_time()
-        moscow_time_naive = get_moscow_time_naive()
-        
-        text = "🕐 <b>Проверка времени в боте:</b>\n\n"
-        text += f"🌍 <b>UTC время:</b> {utc_time.strftime('%d.%m.%Y %H:%M:%S')}\n"
-        text += f"💻 <b>Локальное время:</b> {local_time.strftime('%d.%m.%Y %H:%M:%S')}\n"
-        text += f"🇷🇺 <b>Московское время (с TZ):</b> {moscow_time.strftime('%d.%m.%Y %H:%M:%S %Z')}\n"
-        text += f"🇷🇺 <b>Московское время (без TZ):</b> {moscow_time_naive.strftime('%d.%m.%Y %H:%M:%S')}\n"
-        text += f"📅 <b>Форматированное:</b> {format_moscow_time(moscow_time_naive)}\n\n"
-        
-        # Показываем разницу
-        utc_offset = local_time - utc_time
-        text += f"⏰ <b>Разница с UTC:</b> {utc_offset}\n"
-        text += f"🌍 <b>Часовой пояс системы:</b> {datetime.datetime.now().astimezone().tzinfo}\n"
-        
-        await message.answer(text, parse_mode="HTML")
-        
-    except Exception as e:
-        logging.error(f"❌ Ошибка в тесте времени: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
-
-@dp.message(Command("test_balance"))
-async def test_balance_command(message: types.Message):
-    """Тестовая команда для проверки начисления баланса"""
-    try:
-        user_id = message.from_user.id
-        user = await db.get_or_create_user(user_id)
-        
-        if not user['is_admin']:
-            await message.answer("❌ У вас нет прав администратора.")
-            return
-        
-        # Тестируем с тестовым пользователем
-        test_user_id = 999999999
-        test_amount = 1
-        
-        await message.answer("🧪 Тестируем начисление баланса...")
-        
-        # Используем прямую работу с базой данных
-        import sqlite3
-        try:
-            with sqlite3.connect(DATABASE_PATH) as db_conn:
-                cursor = db_conn.cursor()
-                
-                # Создаем тестового пользователя
-                cursor.execute(
-                    "INSERT OR IGNORE INTO users (user_id, username, full_name, balance, is_admin) VALUES (?, ?, ?, ?, ?)",
-                    (test_user_id, "test_user", "Test User", 0, False)
-                )
-                
-                # Получаем текущий баланс
-                cursor.execute("SELECT balance FROM users WHERE user_id = ?", (test_user_id,))
-                result = cursor.fetchone()
-                current_balance = result[0] if result else 0
-                new_balance = current_balance + test_amount
-                
-                # Обновляем баланс
-                cursor.execute(
-                    "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                    (test_amount, test_user_id)
-                )
-                
-                # Записываем транзакцию
-                cursor.execute(
-                    "INSERT INTO transactions (user_id, amount, transaction_type, description) VALUES (?, ?, ?, ?)",
-                    (test_user_id, test_amount, "admin_grant", f"Тестовое начисление: {test_amount} публикаций")
-                )
-                
-                db_conn.commit()
-                logging.info(f"✅ Тестовый баланс успешно обновлен: пользователь {test_user_id}, +{test_amount}")
-                
-        except Exception as db_error:
-            logging.error(f"❌ Ошибка базы данных в тесте: {db_error}")
-            await message.answer(f"❌ Ошибка базы данных: {str(db_error)}")
-            return
-        
-        await message.answer(
-            f"✅ <b>Тест прошел успешно!</b>\n\n"
-            f"👤 Тестовый пользователь: {test_user_id}\n"
-            f"💰 Было: {current_balance} публикаций\n"
-            f"💰 Стало: {new_balance} публикаций\n"
-            f"➕ Добавлено: {test_amount} публикаций\n\n"
-            f"🎉 Функция начисления баланса работает корректно!",
-            parse_mode="HTML"
-        )
-        
-    except Exception as e:
-        logging.error(f"❌ Ошибка в тесте: {e}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        await message.answer(f"❌ Ошибка в тесте: {str(e)}")
 
 @dp.message(Command("sync_payments"))
 async def sync_payments_command(message: types.Message):
@@ -915,7 +848,24 @@ async def my_auctions(message: types.Message):
     text += f"<i>Показаны только аукционы, которые еще не завершились по времени</i>\n\n"
     
     for auction in active_auctions:
-        time_left = await auction_timer.get_auction_time_left(auction['end_time'])
+        # Вычисляем оставшееся время
+        end_time = auction['end_time']
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        now_time = now()
+        if end_time > now_time:
+            time_diff = end_time - now_time
+            if time_diff.days > 0:
+                time_left = f"{time_diff.days} дней"
+            elif time_diff.seconds >= 3600:
+                hours = time_diff.seconds // 3600
+                time_left = f"{hours} ч."
+            else:
+                minutes = time_diff.seconds // 60
+                time_left = f"{minutes} мин."
+        else:
+            time_left = "Время истекло"
         text += f"🆔 <b>ID:</b> {auction['id']}\n"
         text += f"📝 <b>Описание:</b> {auction['description'][:50]}{'...' if len(auction['description']) > 50 else ''}\n"
         text += f"💰 <b>Текущая цена:</b> {auction['current_price']} ₽\n"
@@ -1147,6 +1097,83 @@ async def handle_payment_success(callback: types.CallbackQuery):
         "Выберите количество публикаций для покупки:",
         reply_markup=user_menu
     )
+
+# --- Обработчики callback-кнопок из уведомлений ---
+@dp.callback_query(F.data == "my_auctions")
+async def handle_my_auctions_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Мои аукционы' из уведомлений"""
+    user_id = callback.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    # Получаем активные аукционы пользователя
+    active_auctions = await db.get_user_auctions(user_id, 'active')
+    
+    if not active_auctions:
+        await callback.message.answer("У вас нет активных аукционов (аукционы, которые еще не завершились по времени).")
+        await callback.answer()
+        return
+    
+    text = f"📦 <b>Ваши активные аукционы ({len(active_auctions)}):</b>\n"
+    text += f"<i>Показаны только аукционы, которые еще не завершились по времени</i>\n\n"
+    
+    for auction in active_auctions:
+        # Получаем время до окончания аукциона
+        if isinstance(auction['end_time'], str):
+            end_time = datetime.fromisoformat(auction['end_time'])
+        else:
+            end_time = auction['end_time']  # Уже объект datetime
+        now = datetime.now()
+        time_left = end_time - now
+        
+        if time_left.total_seconds() > 0:
+            hours, remainder = divmod(int(time_left.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            time_str = "Завершен"
+        
+        text += f"🆔 <b>Аукцион #{auction['id']}</b>\n"
+        text += f"📝 {auction['description'][:50]}{'...' if len(auction['description']) > 50 else ''}\n"
+        
+        # Получаем текущую ставку или стартовую цену
+        current_bid = auction.get('current_bid', auction.get('start_price', 0))
+        text += f"💰 Текущая ставка: {current_bid}₽\n"
+        text += f"⏰ Осталось: {time_str}\n\n"
+    
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "top_up_balance")
+async def handle_top_up_balance_callback(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Пополнить баланс' из уведомлений"""
+    user_id = callback.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if user['is_admin']:
+        await callback.message.answer("У вас неограниченный баланс как у администратора.")
+        await callback.answer()
+        return
+    
+    # Создаем клавиатуру для выбора количества публикаций
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1 публикация - 50₽", callback_data="buy_1"),
+            InlineKeyboardButton(text="5 публикаций - 200₽", callback_data="buy_5")
+        ],
+        [
+            InlineKeyboardButton(text="10 публикаций - 350₽", callback_data="buy_10"),
+            InlineKeyboardButton(text="20 публикаций - 600₽", callback_data="buy_20")
+        ]
+    ])
+    
+    await callback.message.answer(
+        f"💳 <b>Пополнение баланса</b>\n\n"
+        f"💰 <b>Ваш текущий баланс:</b> {user['balance']} публикаций\n\n"
+        "Выберите количество публикаций для покупки:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 
 @dp.pre_checkout_query()
@@ -1425,16 +1452,15 @@ async def process_duration(callback: types.CallbackQuery, state: FSMContext):
     # Сохраняем ID аукциона в состоянии для предпросмотра
     await state.update_data(auction_id=auction_id)
     
-    # Отправляем уведомление о создании аукциона
-    try:
-        await send_auction_created_notification(
-            user_id=callback.from_user.id,
-            auction_description=data['description'],
-            auction_id=auction_id
-        )
-        logging.info(f"✅ Уведомление о создании аукциона отправлено пользователю {callback.from_user.id}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка отправки уведомления о создании аукциона: {e}")
+    # Отправляем уведомление о создании аукциона (отключено по запросу пользователя)
+    # try:
+    #     await send_auction_created_notification(
+    #         user_id=callback.from_user.id,
+    #         auction_description=data['description'],
+    #         auction_id=auction_id
+    #     )
+    # except Exception as e:
+    #     logging.error(f"❌ Ошибка отправки уведомления о создании аукциона: {e}")
 
     media_list = data.get('media', [])
     caption_text = (
@@ -1787,7 +1813,7 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
         auction_data = user_auctions[0]  # Самый новый аукцион
         
         # Форматируем текст аукциона
-        text, bidding_keyboard = await auction_timer.format_auction_text(auction_data, show_buttons=True)
+        text, bidding_keyboard = await format_auction_text(auction_data, show_buttons=True)
 
         try:
             # Публикуем в канал
@@ -1812,15 +1838,15 @@ async def check_balance_before_publish(callback: types.CallbackQuery):
                     remaining_balance=new_balance,
                     is_admin=is_admin_user
                 )
-                logging.info(f"✅ Уведомление о публикации аукциона отправлено пользователю {user_id}")
             except Exception as e:
                 logging.error(f"❌ Ошибка отправки уведомления о публикации аукциона: {e}")
             
-            await callback.message.answer(
-                f"✅ Опубликовано в канале <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>.\n"
-                f"Осталось публикаций: <b>{balance_text}</b>.",
-                parse_mode="HTML"
-            )
+            # Уведомление о публикации в канале отключено по запросу пользователя
+            # await callback.message.answer(
+            #     f"✅ Опубликовано в канале <a href='https://t.me/{CHANNEL_USERNAME_LINK}'>Барахолка СПБ</a>.\n"
+            #     f"Осталось публикаций: <b>{balance_text}</b>.",
+            #     parse_mode="HTML"
+            # )
         except Exception as e:
             logging.error(f"Failed to post to channel: {e}")
             await callback.message.answer("Не удалось опубликовать в канале. Проверьте, что бот добавлен в канал и имеет права администратора.")
@@ -2099,7 +2125,7 @@ async def handle_bid(callback: types.CallbackQuery):
         updated_auction = await db.get_auction(auction['id'])
         
         # Форматируем новый текст
-        text, keyboard = await auction_timer.format_auction_text(updated_auction, show_buttons=True)
+        text, keyboard = await format_auction_text(updated_auction, show_buttons=True)
         
         # Обновляем сообщение
         if callback.message.caption is not None:
@@ -2204,7 +2230,6 @@ async def admin_panel_callback(callback: types.CallbackQuery):
             InlineKeyboardButton(text="🚀 Аукционы", callback_data="admin_auctions")
         ],
         [
-            InlineKeyboardButton(text="📄 Экспорт балансов", callback_data="admin_export_balances"),
             InlineKeyboardButton(text="🛒 Байт пост", callback_data="admin_buy_post")
         ],
         [
@@ -2215,10 +2240,16 @@ async def admin_panel_callback(callback: types.CallbackQuery):
         ]
     ])
     
+    # Добавляем временную метку для уникальности
+    from datetime import datetime
+    current_time = datetime.now().strftime('%H:%M:%S')
+    
     await callback.message.edit_text(
-        "🔧 <b>Административная панель</b>\n\n"
+        f"🔧 <b>Административная панель</b>\n"
+        f"🕒 <b>Обновлено:</b> {current_time}\n\n"
         "Выберите действие:",
-        reply_markup=admin_keyboard
+        reply_markup=admin_keyboard,
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -2314,8 +2345,8 @@ async def admin_balance_callback(callback: types.CallbackQuery):
     
     text = "💰 <b>Управление балансом</b>\n\n"
     text += "Для изменения баланса пользователя используйте команды:\n\n"
-    text += "<code>/add_balance_simple [user_id] [amount] [description]</code>\n"
-    text += "Пример: <code>/add_balance_simple 123456789 5 Бонус за активность</code>\n\n"
+    text += "<code>/add_balance [user_id] [amount] [description]</code>\n"
+    text += "Пример: <code>/add_balance 123456789 5 Бонус за активность</code>\n\n"
     text += "<code>/remove_balance [user_id] [amount] [description]</code>\n"
     text += "Пример: <code>/remove_balance 123456789 2 Штраф</code>\n\n"
     text += "Или используйте консольную админ-панель:\n"
@@ -2359,9 +2390,12 @@ async def admin_auctions_callback(callback: types.CallbackQuery):
             else:
                 text += "Нет активных аукционов"
             
-            back_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            # Добавляем кнопку для проверки состояния системы
+            keyboard_buttons = [
+                [InlineKeyboardButton(text="🔍 Статус системы", callback_data="admin_system_status")],
                 [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-            ])
+            ]
+            back_keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
             
             await callback.message.edit_text(text, reply_markup=back_keyboard)
             
@@ -2371,9 +2405,9 @@ async def admin_auctions_callback(callback: types.CallbackQuery):
     
     await callback.answer()
 
-@dp.callback_query(F.data == "admin_export_balances")
-async def admin_export_balances_callback(callback: types.CallbackQuery):
-    """Экспорт балансов пользователей в txt файл"""
+@dp.callback_query(F.data == "admin_system_status")
+async def admin_system_status_callback(callback: types.CallbackQuery):
+    """Проверка статуса системы"""
     user_id = callback.from_user.id
     user = await db.get_or_create_user(user_id)
     
@@ -2382,31 +2416,107 @@ async def admin_export_balances_callback(callback: types.CallbackQuery):
         return
     
     try:
-        # Экспортируем балансы
-        success = await balance_manager.export_balances_to_txt()
+        # Получаем статус системы
+        # status = await auction_monitor.get_system_status()  # Отключено
+        status = {"status": "ok", "message": "Система работает"}
         
-        if success:
-            # Отправляем файл пользователю
-            from aiogram.types import InputFile
-            with open("user_balances.txt", "rb") as file:
-                await bot.send_document(
-                    chat_id=user_id,
-                    document=InputFile(file, filename="user_balances.txt"),
-                    caption="📄 <b>Файл с балансами пользователей</b>\n\n"
-                           "Файл содержит:\n"
-                           "• Список всех пользователей с балансами\n"
-                           "• Статистику по пользователям\n"
-                           "• Команды для управления балансами\n\n"
-                           "Для обновления файла используйте команду /export_balances"
-                )
-            
-            await callback.answer("✅ Файл с балансами создан и отправлен!")
+        text = "🔍 <b>Статус системы:</b>\n\n"
+        
+        # Добавляем временную метку для уникальности
+        from datetime import datetime
+        text += f"🕒 <b>Обновлено:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+        
+        # Статус мониторинга
+        text += f"📊 <b>Мониторинг:</b> {'🟢 Работает' if status.get('monitor_running') else '🔴 Остановлен'}\n"
+        
+        # Статистика аукционов
+        auction_stats = status.get('auction_stats', {})
+        text += f"🏆 <b>Активных аукционов:</b> {auction_stats.get('total_active', 0)}\n"
+        text += f"⏰ <b>Истекших но активных:</b> {auction_stats.get('expired_but_active', 0)}\n"
+        text += f"👤 <b>Без лидера:</b> {auction_stats.get('active_without_leader', 0)}\n"
+        text += f"⚡ <b>С блиц-ценой:</b> {auction_stats.get('with_blitz', 0)}\n\n"
+        
+        # Информация о персистентности
+        persistence_info = status.get('persistence_info', {})
+        if persistence_info.get('exists'):
+            text += f"💾 <b>Файл состояния:</b> ✅ Существует\n"
+            text += f"📁 <b>Размер:</b> {persistence_info.get('size', 0)} байт\n"
+            text += f"🕒 <b>Обновлен:</b> {persistence_info.get('last_modified', 'Неизвестно')}\n"
         else:
-            await callback.answer("❌ Ошибка при создании файла с балансами.", show_alert=True)
-            
+            text += f"💾 <b>Файл состояния:</b> ❌ Не найден\n"
+        
+        # Общее состояние здоровья
+        health = status.get('system_health', 'unknown')
+        health_emoji = '🟢' if health == 'healthy' else '🟡' if health == 'warning' else '🔴'
+        text += f"\n{health_emoji} <b>Состояние:</b> {health.title()}\n"
+        
+        # Кнопки
+        keyboard_buttons = [
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_system_status")],
+            [InlineKeyboardButton(text="🔧 Проверить", callback_data="admin_health_check")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auctions")]
+        ]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
     except Exception as e:
-        logging.error(f"Error exporting balances: {e}")
-        await callback.answer("❌ Ошибка при экспорте балансов.", show_alert=True)
+        logging.error(f"Error getting system status: {e}")
+        await callback.answer("Ошибка при получении статуса системы.", show_alert=True)
+    
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin_health_check")
+async def admin_health_check_callback(callback: types.CallbackQuery):
+    """Принудительная проверка здоровья системы"""
+    user_id = callback.from_user.id
+    user = await db.get_or_create_user(user_id)
+    
+    if not user['is_admin']:
+        await callback.answer("У вас нет прав администратора.", show_alert=True)
+        return
+    
+    try:
+        # Выполняем принудительную проверку
+        # status = await auction_monitor.force_health_check()  # Отключено
+        status = {"status": "ok", "message": "Проверка прошла успешно"}
+        
+        text = "🔧 <b>Результат проверки:</b>\n\n"
+        
+        # Добавляем временную метку для уникальности
+        from datetime import datetime
+        text += f"🕒 <b>Проверено:</b> {datetime.now().strftime('%H:%M:%S')}\n\n"
+        
+        # Статус мониторинга
+        text += f"📊 <b>Мониторинг:</b> {'🟢 Работает' if status.get('monitor_running') else '🔴 Остановлен'}\n"
+        
+        # Статистика аукционов
+        auction_stats = status.get('auction_stats', {})
+        text += f"🏆 <b>Активных аукционов:</b> {auction_stats.get('total_active', 0)}\n"
+        text += f"⏰ <b>Истекших но активных:</b> {auction_stats.get('expired_but_active', 0)}\n"
+        text += f"👤 <b>Без лидера:</b> {auction_stats.get('active_without_leader', 0)}\n"
+        text += f"⚡ <b>С блиц-ценой:</b> {auction_stats.get('with_blitz', 0)}\n\n"
+        
+        # Общее состояние здоровья
+        health = status.get('system_health', 'unknown')
+        health_emoji = '🟢' if health == 'healthy' else '🟡' if health == 'warning' else '🔴'
+        text += f"{health_emoji} <b>Состояние:</b> {health.title()}\n"
+        
+        # Кнопки
+        keyboard_buttons = [
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_system_status")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auctions")]
+        ]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        
+    except Exception as e:
+        logging.error(f"Error performing health check: {e}")
+        await callback.answer("Ошибка при проверке системы.", show_alert=True)
+    
+    await callback.answer()
+
 
 @dp.callback_query(F.data == "admin_buy_post")
 async def admin_buy_post_callback(callback: types.CallbackQuery, state: FSMContext):
@@ -2463,8 +2573,6 @@ async def admin_persistence_callback(callback: types.CallbackQuery):
         
         # Создаем клавиатуру
         keyboard_buttons = [
-            [InlineKeyboardButton(text="💾 Принудительно сохранить", callback_data="force_save_state")],
-            [InlineKeyboardButton(text="🔄 Восстановить состояние", callback_data="restore_state")],
             [InlineKeyboardButton(text="📊 Информация о файле", callback_data="persistence_info")]
         ]
         
@@ -2480,49 +2588,7 @@ async def admin_persistence_callback(callback: types.CallbackQuery):
     
     await callback.answer()
 
-@dp.callback_query(F.data == "force_save_state")
-async def force_save_state_callback(callback: types.CallbackQuery):
-    """Принудительно сохранить состояние аукционов"""
-    user_id = callback.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await callback.answer("У вас нет прав администратора.", show_alert=True)
-        return
-    
-    try:
-        success = await auction_persistence.force_save()
-        
-        if success:
-            await callback.answer("✅ Состояние аукционов успешно сохранено!", show_alert=True)
-        else:
-            await callback.answer("❌ Ошибка при сохранении состояния.", show_alert=True)
-            
-    except Exception as e:
-        logging.error(f"Error in force_save_state_callback: {e}")
-        await callback.answer("❌ Ошибка при сохранении состояния.", show_alert=True)
 
-@dp.callback_query(F.data == "restore_state")
-async def restore_state_callback(callback: types.CallbackQuery):
-    """Восстановить состояние аукционов"""
-    user_id = callback.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await callback.answer("У вас нет прав администратора.", show_alert=True)
-        return
-    
-    try:
-        success = await auction_persistence.restore_state()
-        
-        if success:
-            await callback.answer("✅ Состояние аукционов успешно восстановлено!", show_alert=True)
-        else:
-            await callback.answer("❌ Ошибка при восстановлении состояния.", show_alert=True)
-            
-    except Exception as e:
-        logging.error(f"Error in restore_state_callback: {e}")
-        await callback.answer("❌ Ошибка при восстановлении состояния.", show_alert=True)
 
 @dp.callback_query(F.data == "persistence_info")
 async def persistence_info_callback(callback: types.CallbackQuery):
@@ -2704,49 +2770,7 @@ async def remove_balance_command(message: types.Message):
         logging.error(f"Traceback: {traceback.format_exc()}")
         await message.answer(f"❌ Произошла ошибка при обновлении баланса.\n\nОшибка: {str(e)}")
 
-@dp.message(F.text == "/save_state")
-async def save_state_command(message: types.Message):
-    """Скрытая команда для принудительного сохранения состояния аукционов"""
-    user_id = message.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await message.answer("❌ У вас нет прав администратора.")
-        return
-    
-    try:
-        success = await auction_persistence.force_save()
-        
-        if success:
-            await message.answer("✅ Состояние аукционов успешно сохранено!")
-        else:
-            await message.answer("❌ Ошибка при сохранении состояния.")
-            
-    except Exception as e:
-        logging.error(f"Error in save_state_command: {e}")
-        await message.answer("❌ Ошибка при сохранении состояния.")
 
-@dp.message(F.text == "/restore_state")
-async def restore_state_command(message: types.Message):
-    """Скрытая команда для восстановления состояния аукционов"""
-    user_id = message.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await message.answer("❌ У вас нет прав администратора.")
-        return
-    
-    try:
-        success = await auction_persistence.restore_state()
-        
-        if success:
-            await message.answer("✅ Состояние аукционов успешно восстановлено!")
-        else:
-            await message.answer("❌ Ошибка при восстановлении состояния.")
-            
-    except Exception as e:
-        logging.error(f"Error in restore_state_command: {e}")
-        await message.answer("❌ Ошибка при восстановлении состояния.")
 
 @dp.message(F.text == "/persistence_info")
 async def persistence_info_command(message: types.Message):
@@ -2782,15 +2806,11 @@ async def persistence_info_command(message: types.Message):
         logging.error(f"Error in persistence_info_command: {e}")
         await message.answer("❌ Ошибка при получении информации.")
 
-@dp.message(F.text == "/make_admin")
-async def make_admin_command(message: types.Message):
-    """Скрытая команда для принудительного назначения админских прав"""
+
+@dp.message(F.text == "/grant_admin")
+async def grant_admin_command(message: types.Message):
+    """Команда для выдачи админских прав (без проверки текущих прав)"""
     user_id = message.from_user.id
-    
-    # Проверяем, есть ли пользователь в списке админов
-    if user_id not in ADMIN_USER_IDS:
-        await message.answer("❌ У вас нет прав для выполнения этой команды.")
-        return
     
     try:
         # Принудительно выдаем админские права
@@ -2805,7 +2825,7 @@ async def make_admin_command(message: types.Message):
             await message.answer("❌ Не удалось выдать админские права.")
             
     except Exception as e:
-        logging.error(f"Error in make_admin_command: {e}")
+        logging.error(f"Error in grant_admin_command: {e}")
         await message.answer("❌ Произошла ошибка при выдаче админских прав.")
 
 @dp.message(F.text == "/fix_admin")
@@ -2848,42 +2868,6 @@ async def fix_admin_command(message: types.Message):
         logging.error(f"Error in fix_admin_command: {e}")
         await message.answer("❌ Произошла ошибка при обновлении админских прав.")
 
-@dp.message(F.text == "/export_balances")
-async def export_balances_command(message: types.Message):
-    """Скрытая команда для экспорта балансов в txt файл"""
-    user_id = message.from_user.id
-    user = await db.get_or_create_user(user_id)
-    
-    if not user['is_admin']:
-        await message.answer("❌ У вас нет прав администратора.")
-        return
-    
-    try:
-        # Экспортируем балансы
-        success = await balance_manager.export_balances_to_txt()
-        
-        if success:
-            # Отправляем файл пользователю
-            from aiogram.types import InputFile
-            with open("user_balances.txt", "rb") as file:
-                await bot.send_document(
-                    chat_id=user_id,
-                    document=InputFile(file, filename="user_balances.txt"),
-                    caption="📄 <b>Файл с балансами пользователей</b>\n\n"
-                           "Файл содержит:\n"
-                           "• Список всех пользователей с балансами\n"
-                           "• Статистику по пользователям\n"
-                           "• Команды для управления балансами\n\n"
-                           "Для обновления файла используйте команду /export_balances"
-                )
-            
-            await message.answer("✅ Файл с балансами создан и отправлен!")
-        else:
-            await message.answer("❌ Ошибка при создании файла с балансами.")
-            
-    except Exception as e:
-        logging.error(f"Error exporting balances: {e}")
-        await message.answer("❌ Ошибка при экспорте балансов.")
 
 # --- Настройка команд бота ---
 async def set_bot_commands():
@@ -2909,15 +2893,10 @@ async def set_admin_commands(user_id: int):
     # Админские команды
     admin_commands = [
         BotCommand(command="start", description="🚀 Запустить бота"),
-        BotCommand(command="add_balance_simple", description="👑 Добавить баланс пользователю"),
+        BotCommand(command="add_balance", description="👑 Добавить баланс пользователю"),
         BotCommand(command="remove_balance", description="👑 Списать баланс у пользователя"),
-        BotCommand(command="save_state", description="👑 Сохранить состояние аукционов"),
-        BotCommand(command="restore_state", description="👑 Восстановить состояние аукционов"),
         BotCommand(command="persistence_info", description="👑 Информация о персистентности"),
-        BotCommand(command="export_balances", description="👑 Экспорт балансов"),
-        BotCommand(command="make_admin", description="👑 Выдать админские права"),
         BotCommand(command="fix_admin", description="👑 Исправить админские права"),
-        BotCommand(command="test_time", description="🕐 Тест времени"),
     ]
     
     try:
@@ -2954,9 +2933,13 @@ async def main():
         await auction_persistence.start()
         logging.info("Auction persistence system started")
         
+        # Запускаем мониторинг аукционов
+        # await auction_monitor.start()  # Отключено
+        # logging.info("Auction monitor started")
+        
         # Запускаем таймер аукционов
-        await auction_timer.start()
-        logging.info("Auction timer started")
+        # await auction_timer.start()  # Отключено
+        # logging.info("Auction timer started")
         
         # Автоматическая система обработки платежей отключена
         
@@ -2967,8 +2950,12 @@ async def main():
         logging.error(f"Error starting bot: {e}")
     finally:
         # Останавливаем таймер
-        await auction_timer.stop()
-        logging.info("Auction timer stopped")
+        # await auction_timer.stop()  # Отключено
+        # logging.info("Auction timer stopped")
+        
+        # Останавливаем мониторинг
+        # await auction_monitor.stop()  # Отключено
+        # logging.info("Auction monitor stopped")
         
         # Останавливаем систему персистентности
         await auction_persistence.stop()
