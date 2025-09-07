@@ -77,6 +77,13 @@ def start_webhook_server():
         from bot import app
         port = int(os.environ.get("PORT", 8080))
         print(f"🌐 Запуск сервера на порту {port}")
+        # Используем gunicorn для production
+        import gunicorn.app.wsgiapp as wsgi
+        sys.argv = ['gunicorn', '--bind', f'0.0.0.0:{port}', '--workers', '1', '--timeout', '120', 'bot:app']
+        wsgi.run()
+    except ImportError:
+        # Если gunicorn не установлен, используем Flask
+        print("⚠️ Gunicorn не найден, используем Flask (не рекомендуется для production)")
         app.run(host="0.0.0.0", port=port, debug=False)
     except Exception as e:
         print(f"❌ Ошибка запуска webhook сервера: {e}")
